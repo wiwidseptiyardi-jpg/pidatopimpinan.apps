@@ -1,939 +1,989 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, FileText, FileType, RefreshCw, Upload, Image as ImageIcon, Globe, Sparkles, Loader2, LogOut, KeyRound, Mail, Lock, User, MessageCircle, FilePenLine, History, Save, X } from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, collection, getDocs, deleteDoc } from 'firebase/firestore';
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PidatoPimpinan.AI - Aplikasi Naskah Sambutan</title>
 
-// --- MASUKKAN URL WEB APP GOOGLE SCRIPT ANDA DI SINI ---
-const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyExYlVOtlHkZ5beVzFPDQQUm8TApcy_DCGitbSSk3clieuxEBXFzuxOfittcBQjLkwYw/exec"; 
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
 
-// ==========================================
-// --- KONFIGURASI FIREBASE ANDA ---
-// ==========================================
-const myFirebaseConfig = {
-  apiKey: "AIzaSyDLKZMnBalp0UjSfHQ4w3JLYa0I297pjGo",
-  authDomain: "pidato-pimpinan.firebaseapp.com",
-  projectId: "pidato-pimpinan",
-  storageBucket: "pidato-pimpinan.firebasestorage.app",
-  messagingSenderId: "739253878073",
-  appId: "1:739253878073:web:cb07df714a76a02bdc3ce8"
-};
+  <!-- Babel untuk kompilasi JSX langsung di browser (SANGAT PENTING AGAR TIDAK KACAU) -->
+  <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
 
-// --- Firebase Setup ---
-const firebaseConfig = (typeof __firebase_config !== 'undefined' && Object.keys(myFirebaseConfig.apiKey).length === 0) 
-  ? JSON.parse(__firebase_config) 
-  : myFirebaseConfig;
+  <!-- Import Map untuk Module React, Lucide Icons, dan Firebase -->
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0",
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js"
+      }
+    }
+  </script>
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-// --- Utility: Fetch via Google Apps Script for Gemini API ---
-const fetchGeminiWithBackoff = async (prompt) => {
-  const options = {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
-    body: JSON.stringify({ action: 'generateAI', prompt: prompt })
-  };
+  <style>
+    /* Tambahan styling agar scrollbar rapi */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-800 m-0 p-0 overflow-x-hidden">
   
-  const delays = [1000, 2000, 4000, 8000, 16000];
-  for (let i = 0; i < 5; i++) {
-    try {
-      if(!GAS_WEB_APP_URL || GAS_WEB_APP_URL === "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
-         throw new Error("URL Google Apps Script belum diatur.");
-      }
+  <!-- Tempat aplikasi React akan dimuat -->
+  <div id="root"></div>
 
-      const response = await fetch(GAS_WEB_APP_URL, options);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: Gagal menghubungi server backend.`);
-      }
-      const resData = await response.json();
-      
-      if (!resData.success) {
-         throw new Error(resData.error || "Gagal memproses data AI di backend.");
-      }
-      
-      const text = resData.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) {
-        throw new Error("Respons AI kosong. Kemungkinan diblokir oleh filter keamanan.");
-      }
-      
-      return text;
-    } catch (error) {
-      if (i === 4) {
-        throw new Error("Gagal terhubung ke AI: " + error.message);
-      }
-      await new Promise(res => setTimeout(res, delays[i]));
-    }
-  }
-};
+  <!-- KODE UTAMA APLIKASI (Tipe script WAJIB text/babel) -->
+  <script type="text/babel" data-type="module">
+    import React, { useState, useRef, useEffect } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { Plus, Trash2, FileText, FileType, RefreshCw, Upload, Image as ImageIcon, Globe, Sparkles, Loader2, LogOut, KeyRound, Mail, Lock, User, MessageCircle, FilePenLine, History, Save, X } from 'lucide-react';
+    import { initializeApp } from 'firebase/app';
+    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, signOut } from 'firebase/auth';
+    import { getFirestore, doc, setDoc, collection, getDocs, deleteDoc } from 'firebase/firestore';
 
-function MainApp({ onLogout, userProfile, userId }) {
-  const [formData, setFormData] = useState({
-    logo: null,
-    eventName: '',
-    eventTheme: '',
-    eventDate: '',
-    eventTime: '',
-    eventLocation: '',
-    speakerName: '',
-    speakerTitle: '',
-    greetingType: 'formal',
-    closingPantun: '',
-    language: 'id',
-    regionalLanguage: '',
-    openingSpeech: '', 
-    closingSpeech: '',
-  });
+    // --- MASUKKAN URL WEB APP GOOGLE SCRIPT ANDA DI SINI ---
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyExYlVOtlHkZ5beVzFPDQQUm8TApcy_DCGitbSSk3clieuxEBXFzuxOfittcBQjLkwYw/exec"; 
 
-  const [paperConfig, setPaperConfig] = useState({ size: 'A4' });
-  const [guests, setGuests] = useState([{ name: '', title: '' }]);
-  const [points, setPoints] = useState(['']);
+    // ==========================================
+    // --- KONFIGURASI FIREBASE ANDA ---
+    // ==========================================
+    const myFirebaseConfig = {
+      apiKey: "AIzaSyDLKZMnBalp0UjSfHQ4w3JLYa0I297pjGo",
+      authDomain: "pidato-pimpinan.firebaseapp.com",
+      projectId: "pidato-pimpinan",
+      storageBucket: "pidato-pimpinan.firebasestorage.app",
+      messagingSenderId: "739253878073",
+      appId: "1:739253878073:web:cb07df714a76a02bdc3ce8"
+    };
 
-  const [generatingIndex, setGeneratingIndex] = useState(null);
-  const [generatingPantun, setGeneratingPantun] = useState(false);
-  const [generatingOpening, setGeneratingOpening] = useState(false);
-  const [generatingClosing, setGeneratingClosing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  
-  const [historyList, setHistoryList] = useState([]);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+    // --- Firebase Setup ---
+    const firebaseConfig = (typeof __firebase_config !== 'undefined' && Object.keys(myFirebaseConfig.apiKey).length === 0) 
+      ? JSON.parse(__firebase_config) 
+      : myFirebaseConfig;
 
-  const previewRef = useRef(null);
-  const [notification, setNotification] = useState('');
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-  useEffect(() => {
-    if (!formData.openingSpeech && formData.eventName) {
-       const defaultIntro = `PUJI DAN SYUKUR MARILAH KITA PANJATKAN KE HADIRAT ALLAH SWT, KARENA ATAS NIKMAT DAN KARUNIA-NYA KITA DAPAT HADIR DALAM ACARA ${formData.eventName.toUpperCase()} DENGAN TEMA "${formData.eventTheme.toUpperCase()}".`;
-       setFormData(prev => ({ ...prev, openingSpeech: defaultIntro }));
-    }
-  }, [formData.eventName, formData.eventTheme]);
-
-  useEffect(() => {
-    if (isHistoryOpen) {
-      fetchHistory();
-    }
-  }, [isHistoryOpen]);
-
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleLogoUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.size > 500 * 1024) {
-        showNotification("Gagal: Ukuran logo maksimal 500KB.");
-        return;
-      }
-      const reader = new FileReader();
-      reader.onloadend = () => setFormData(prev => ({ ...prev, logo: reader.result }));
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const removeLogo = () => setFormData(prev => ({ ...prev, logo: null }));
-  const addGuest = () => setGuests([...guests, { name: '', title: '' }]);
-  const removeGuest = (index) => setGuests(guests.filter((_, i) => i !== index));
-  const updateGuest = (index, field, value) => {
-    const newGuests = [...guests];
-    newGuests[index][field] = value;
-    setGuests(newGuests);
-  };
-
-  const addPoint = () => setPoints([...points, '']);
-  const removePoint = (index) => setPoints(points.filter((_, i) => i !== index));
-  const updatePoint = (index, value) => {
-    const newPoints = [...points];
-    newPoints[index] = value;
-    setPoints(newPoints);
-  };
-
-  const getLanguageInstruction = () => {
-    return formData.language === 'en' 
-        ? "Bahasa Inggris (English)" 
-        : formData.language === 'regional' 
-            ? `Bahasa Daerah (${formData.regionalLanguage}), jika sulit gunakan Bahasa Indonesia formal` 
-            : "Bahasa Indonesia Formal";
-  };
-
-  const handleAIOpening = async () => {
-    if (!formData.eventName) return showNotification("Isi nama acara terlebih dahulu.");
-    setGeneratingOpening(true);
-    try {
-        const prompt = `Buatkan paragraf PEMBUKAAN pidato resmi yang menarik dan relevan. Konteks: Acara: ${formData.eventName}, Tema: ${formData.eventTheme}, Waktu/Tempat: ${formData.eventDate}, ${formData.eventLocation}, Bahasa: ${getLanguageInstruction()}. Instruksi: Mulai dengan Puji Syukur. Sebutkan tujuan acara secara singkat. Gaya bahasa: Pejabat, wibawa, hangat. Output: HANYA teks paragraf pembuka (tanpa salam pembuka). Gunakan HURUF KAPITAL.`;
-        const text = await fetchGeminiWithBackoff(prompt);
-        if (text) setFormData(prev => ({ ...prev, openingSpeech: text.trim() }));
-    } catch (error) { showNotification(error.message || "Gagal membuat pembukaan."); } 
-    finally { setGeneratingOpening(false); }
-  };
-
-  const handleAIGeneratePoint = async (index) => {
-    const pointer = points[index];
-    if (!pointer || pointer.trim().length < 3) return showNotification("Tuliskan poin minimal 3 karakter.");
-    setGeneratingIndex(index);
-    try {
-      const prompt = `Kembangkan poin ini jadi 1 paragraf pidato formal pejabat: "${pointer}". Konteks: ${formData.eventName}. Bahasa: ${getLanguageInstruction()}. HANYA TEKS PARAGRAF, HURUF KAPITAL.`;
-      const text = await fetchGeminiWithBackoff(prompt);
-      if (text) updatePoint(index, text.trim());
-    } catch (error) { showNotification(error.message || "Gagal membuat teks."); } 
-    finally { setGeneratingIndex(null); }
-  };
-
-  const handleAIClosing = async () => {
-    const contentContext = points.filter(p => p.trim() !== '').join('. ');
-    if (!contentContext) return showNotification("Isi poin sambutan dulu agar penutup sinkron.");
-    setGeneratingClosing(true);
-    try {
-        const prompt = `Buatkan paragraf PENUTUP pidato resmi yang SINKRON dengan isi materi: "${contentContext}". Acara: ${formData.eventName}. Instruksi: Berikan kesimpulan singkat/harapan. Ajak hadirin berkolaborasi. Ucapkan terima kasih dan maaf. Bahasa: ${getLanguageInstruction()}. Output: HANYA teks paragraf penutup. Gunakan HURUF KAPITAL.`;
-        const text = await fetchGeminiWithBackoff(prompt);
-        if (text) setFormData(prev => ({ ...prev, closingSpeech: text.trim() }));
-    } catch (error) { showNotification(error.message || "Gagal membuat penutup."); } 
-    finally { setGeneratingClosing(false); }
-  };
-
-  const handleAIPantunGenerate = async () => {
-    const contextText = points.filter(p => p.trim() !== '').join('. ');
-    setGeneratingPantun(true);
-    try {
-        const prompt = `Buatkan satu bait PANTUN PENUTUP (4 baris) untuk pidato acara: ${formData.eventName}. Isi pidato: "${contextText}". Bahasa: ${formData.language === 'en' ? 'Inggris' : 'Indonesia'}. HANYA TEKS PANTUN KAPITAL.`;
-        const text = await fetchGeminiWithBackoff(prompt);
-        if (text) setFormData(prev => ({ ...prev, closingPantun: text.trim() }));
-    } catch (error) { showNotification(error.message || "Gagal membuat pantun."); } 
-    finally { setGeneratingPantun(false); }
-  };
-
-  const fetchHistory = async () => {
-    try {
-      const querySnapshot = await getDocs(collection(db, 'artifacts', appId, 'users', userId, 'speeches'));
-      const data = [];
-      querySnapshot.forEach((doc) => {
-        data.push({ id: doc.id, ...doc.data() });
-      });
-      data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      setHistoryList(data);
-    } catch (error) {
-      console.error("Error fetching history:", error);
-      showNotification("Gagal memuat riwayat naskah.");
-    }
-  };
-
-  const handleSaveToHistory = async () => {
-    if (!formData.eventName) {
-      showNotification("Isi nama acara terlebih dahulu untuk menyimpan!");
-      return;
-    }
-    setIsSaving(true);
-    try {
-      const speechData = {
-        formData,
-        guests,
-        points,
-        createdAt: new Date().toISOString()
-      };
-      const docRef = doc(collection(db, 'artifacts', appId, 'users', userId, 'speeches'));
-      await setDoc(docRef, speechData);
-      showNotification("Naskah berhasil disimpan ke Riwayat!");
-      if (isHistoryOpen) fetchHistory();
-    } catch (error) {
-      console.error("Error saving history:", error);
-      showNotification("Gagal menyimpan naskah.");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleDeleteHistory = async (id) => {
-    try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'speeches', id));
-      setHistoryList(prev => prev.filter(item => item.id !== id));
-      showNotification("Riwayat berhasil dihapus.");
-    } catch (error) {
-      console.error("Error deleting history:", error);
-      showNotification("Gagal menghapus riwayat.");
-    }
-  };
-
-  const handleLoadHistoryItem = (item) => {
-    setFormData(item.formData);
-    setGuests(item.guests || [{ name: '', title: '' }]);
-    setPoints(item.points || ['']);
-    setIsHistoryOpen(false);
-    showNotification("Naskah berhasil dimuat dari Riwayat.");
-  };
-
-  const getGreetings = () => formData.language === 'en' ? "BISMILLAAHIRRAHMAANIRRAHIIM\nASSALAMU’ALAIKUM WR. WB.\nPEACE BE UPON YOU, AND ALLAH'S MERCY AND BLESSINGS." : "BISMILLAAHIRRAHMAANIRRAHIIM\nASSALAAMU’ALAIKUM WR. WB.\nSALAM SEJAHTERA UNTUK KITA SEMUA,\nSAMPURASUN.";
-  const getGuestPrefix = (index) => formData.language === 'en' ? (index === 0 ? "THE HONORABLE, " : "DISTINGUISHED, ") : (index === 0 ? "YTH. " : "YSH. ");
-  const getParticipantPrefix = () => formData.language === 'en' ? "AND BELOVED AUDIENCE." : "YSB. PARA PESERTA,\nHADIRIN UNDANGAN YANG SAYA HORMATI.";
-  const getInterjections = () => formData.language === 'en' ? ["DISTINGUISHED GUESTS,", "HAPPY ATTENDEES,", "BELOVED AUDIENCE,"] : ["HADIRIN YANG SAYA HORMATI,", "HADIRIN YANG BERBAHAGIA,", "HADIRIN YANG SAYA BANGGAKAN,"];
-  const getFinalThanks = () => formData.language === 'en' ? "THANK YOU." : "TERIMA KASIH.\nBILLAAHITTAUFIQ WALHIDAYAH,\nWASSALAAMU’ALAIKUM WR. WB.";
-
-  const generateSpeechHTML = () => {
-    const eName = (formData.eventName || '[NAMA ACARA]').toUpperCase();
-    const eDate = (formData.eventDate || '[TANGGAL]').toUpperCase();
-    const eTime = (formData.eventTime || '[WAKTU]').toUpperCase();
-    const eLoc = (formData.eventLocation || '[TEMPAT]').toUpperCase();
-    const sTitle = (formData.speakerTitle || '[JABATAN PEMBICARA]').toUpperCase();
-    const sName = (formData.speakerName || '[NAMA PEMBICARA]').toUpperCase();
-    const gType = getGreetings().toUpperCase();
-    const L_TITLE = formData.language === 'en' ? "WELCOME SPEECH" : "SAMBUTAN";
-    const L_ONEVENT = formData.language === 'en' ? "ON THE OCCASION OF" : "PADA ACARA";
-    const L_DATE = formData.language === 'en' ? "DAY / DATE" : "HARI / TANGGAL";
-    const L_TIME = formData.language === 'en' ? "TIME" : "WAKTU";
-    const L_LOC = formData.language === 'en' ? "VENUE" : "TEMPAT";
-    const interjections = getInterjections();
-    const bodyStyle = "font-family: Arial, sans-serif; font-size: 16pt; line-height: 1.5; color: #000000;";
-    const headerStyle = "text-align: center; font-weight: bold; margin-bottom: 20px;";
-    const justifyStyle = "text-align: justify;";
-    const indentStyle = "text-indent: 1.27cm;";
-
-    return `
-      <div style="${bodyStyle}">
-        <div style="${headerStyle}">
-          ${formData.logo ? `<div style="text-align: center; margin-bottom: 10px;"><img src="${formData.logo}" width="100" style="width: 100px; height: auto;" /></div>` : ''}
-          <p style="margin: 0;">${L_TITLE}</p><p style="margin: 0;">${sTitle}</p><p style="margin: 0;">${L_ONEVENT}</p><p style="margin: 0; margin-bottom: 20px;">${eName}</p>
-          <table align="center" style="margin: 0 auto; width: 90%; font-family: Arial, sans-serif; font-size: 16pt; font-weight: bold; border: none;">
-            <tr><td style="width: 200px;">${L_DATE}</td><td>: ${eDate}</td></tr><tr><td>${L_TIME}</td><td>: ${eTime}</td></tr><tr><td>${L_LOC}</td><td>: ${eLoc}</td></tr>
-          </table>
-        </div>
-        <hr style="border: 1px solid #000; margin: 20px 0;" />
-        <div style="${justifyStyle}">
-          <p style="white-space: pre-line;">${gType}</p><br/>
-          <ul style="list-style-type: none; padding-left: 0; margin: 0;">
-            ${guests.map((g, i) => `<li>${getGuestPrefix(i)} ${g.name ? `${(g.title || '').toUpperCase()} <strong>${(g.name || '').toUpperCase()}</strong>` : (g.title || '').toUpperCase()}</li>`).join('')}
-            <li style="white-space: pre-line;">${getParticipantPrefix()}</li>
-          </ul><br/>
-          <p style="${indentStyle}">${formData.openingSpeech || '[Pembukaan belum dibuat]'}</p><br/>
-          <p style="${indentStyle} margin-bottom: 10px;">${interjections[0]}</p>
-          ${points.map(p => `<p style="${indentStyle}">${(p || '').toUpperCase()}</p>`).join('')}<br/>
-          <p style="${indentStyle} margin-bottom: 10px;">${interjections[1]}</p><p style="${indentStyle} margin-bottom: 10px;">${interjections[2]}</p>
-          <p style="${indentStyle}">${formData.closingSpeech || '[Penutup belum dibuat]'}</p>
-          ${formData.closingPantun ? `<div style="text-align: center; font-style: italic; margin: 20px 0;">${formData.closingPantun.toUpperCase().replace(/\n/g, '<br/>')}</div>` : ''}<br/>
-          <div style="text-align: center; margin-top: 30px;"><p style="white-space: pre-line;">${getFinalThanks()}</p><br/><br/><br/><p style="font-weight: bold;">${sTitle}</p><p style="font-weight: bold;">${sName}</p></div>
-        </div>
-      </div>
-    `;
-  };
-
-  const handleDownloadWord = () => {
-    const htmlContent = generateSpeechHTML();
-    const sourceHTML = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Naskah Sambutan</title></head><body>" + htmlContent + "</body></html>";
-    const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
-    const fileDownload = document.createElement("a");
-    document.body.appendChild(fileDownload);
-    fileDownload.href = source;
-    fileDownload.download = `Sambutan-${formData.eventName.replace(/\s+/g, '-') || 'Naskah'}.doc`;
-    fileDownload.click();
-    document.body.removeChild(fileDownload);
-    showNotification('Sedang mengunduh file Word...');
-  };
-
-  const showNotification = (msg) => { setNotification(msg); setTimeout(() => setNotification(''), 3000); };
-
-  const renderSpeechContent = () => {
-    const eName = (formData.eventName || '[NAMA ACARA]').toUpperCase();
-    const L_TITLE = formData.language === 'en' ? "WELCOME SPEECH" : "SAMBUTAN";
-    const L_ONEVENT = formData.language === 'en' ? "ON THE OCCASION OF" : "PADA ACARA";
-    const L_DATE = formData.language === 'en' ? "DAY / DATE" : "HARI / TANGGAL";
-    const L_TIME = formData.language === 'en' ? "TIME" : "WAKTU";
-    const L_LOC = formData.language === 'en' ? "VENUE" : "TEMPAT";
-    const interjections = getInterjections();
-
-    return (
-    <div className="prose max-w-none text-slate-900 font-sans text-[16pt] uppercase text-justify" style={{ fontFamily: 'Arial, Helvetica, sans-serif', lineHeight: '1.5' }}>
-      <div className="text-center mb-10 pb-6 border-b-4 border-double border-slate-800">
-        {formData.logo ? <img src={formData.logo} alt="Logo" className="h-24 mx-auto mb-6 object-contain" /> : <div className="h-24 w-24 mx-auto mb-6 bg-slate-100 border-2 border-dashed border-slate-300 rounded-full flex items-center justify-center text-slate-400 text-xs text-center p-2 print:hidden text-[10pt]">[LOGO]</div>}
-        <div className="mb-4"><p className="mb-1">{L_TITLE}</p><p className="font-bold">{formData.speakerTitle || '[JABATAN]'}</p></div>
-        <div className="mb-8"><p className="mb-1">{L_ONEVENT}</p><p className="font-bold">{eName}</p></div>
-        <div className="inline-block text-left w-full print:p-0">
-          <table className="mx-auto w-full md:w-[90%]">
-            <tbody>
-                <tr><td className="w-[200px] align-top">{L_DATE}</td><td className="w-[10px]">:</td><td>{formData.eventDate || '...'}</td></tr>
-                <tr><td className="align-top">{L_TIME}</td><td>:</td><td>{formData.eventTime || '...'}</td></tr>
-                <tr><td className="align-top">{L_LOC}</td><td>:</td><td>{formData.eventLocation || '...'}</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div className="mb-6 whitespace-pre-line font-medium text-left">{getGreetings()}</div>
-      <div className="mb-8 text-left">
-        <ul className="list-none pl-0 space-y-2">
-          {guests.some(g => g.name || g.title) ? guests.map((guest, i) => <li key={i}>{getGuestPrefix(i)} {guest.title} {guest.name && <strong>{guest.name}</strong>}</li>) : <li className="text-slate-300 italic">[DAFTAR TAMU]</li>}
-           <li className="mt-2 whitespace-pre-line">{getParticipantPrefix()}</li>
-        </ul>
-      </div>
-      <div className="mb-6 text-justify"><p className="indent-16 whitespace-pre-line">{formData.openingSpeech || <span className="text-slate-400 italic normal-case">[Pembukaan belum dibuat. Isi form di kiri atau gunakan AI]</span>}</p></div>
-      <div className="mb-4 text-left indent-16"><p>{interjections[0]}</p></div>
-      <div className="mb-6 text-justify">{points.some(p => p !== '') ? points.map((point, i) => point && <p key={i} className="mb-4 indent-16">{point}</p>) : <p className="text-slate-300 italic p-6 border-2 border-dashed border-slate-200 rounded-lg text-center normal-case">Tuliskan poin utama sambutan di sini.</p>}</div>
-      <div className="mb-4 text-left indent-16"><p>{interjections[1]}</p></div>
-      <div className="mb-12 text-justify">
-        <p className="mb-4 text-left indent-16">{interjections[2]}</p>
-        <p className="indent-16 whitespace-pre-line">{formData.closingSpeech || <span className="text-slate-400 italic normal-case">[Penutup belum dibuat. Isi form di kiri atau gunakan AI]</span>}</p>
-        {formData.closingPantun && <div className="my-8 text-center italic font-semibold text-slate-800 whitespace-pre-line border-y-2 border-slate-100 py-6 bg-slate-50 rounded-lg">{formData.closingPantun}</div>}
-      </div>
-      <div>
-        <div className="text-center mt-12 mb-8 whitespace-pre-line">{getFinalThanks()}</div>
-        <div className="text-center"><p className="mb-20 font-bold">{formData.speakerTitle || (formData.language === 'en' ? 'SPEAKER' : 'PEMBICARA')}</p><p className="font-bold inline-block min-w-[220px] pb-1">{formData.speakerName || '( NAMA TERANG )'}</p></div>
-      </div>
-    </div>
-    );
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 font-sans print:bg-white print:p-0 relative">
-      
-      {/* FUTURISTIC HEADER BANNER */}
-      <div className="absolute top-0 left-0 w-full h-72 bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800 print:hidden z-0 overflow-hidden">
-         <div className="absolute top-[-20%] right-[-10%] w-[500px] h-[500px] bg-cyan-500 rounded-full mix-blend-screen filter blur-[100px] opacity-20"></div>
-         <div className="absolute top-[20%] left-[-10%] w-[400px] h-[400px] bg-blue-600 rounded-full mix-blend-screen filter blur-[80px] opacity-20"></div>
-         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 mix-blend-overlay"></div>
-      </div>
-
-      <div className="relative z-10 p-4 md:p-8 pt-8 md:pt-12">
-        <div className="max-w-6xl mx-auto mb-10 print:hidden flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="text-center md:text-left flex items-center gap-4">
-            <div className="bg-white/10 p-3 rounded-2xl backdrop-blur-md border border-white/20 shadow-lg">
-              <FilePenLine className="w-10 h-10 text-cyan-300" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold text-white tracking-tight drop-shadow-md">
-                PidatoPimpinan.AI
-              </h1>
-              <p className="text-blue-200 mt-1 font-medium text-sm">Aplikasi Pembuat Naskah Sambutan Otomatis</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-3">
-            {/* Tombol Riwayat */}
-            <button onClick={() => setIsHistoryOpen(true)} className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white px-5 py-2.5 rounded-xl border border-white/20 transition-colors shadow-lg text-sm font-semibold">
-              <History size={18} /> Riwayat
-            </button>
-            
-            <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-2 rounded-xl shadow-lg ml-2">
-              <div className="flex flex-col text-right">
-                <span className="text-sm font-bold text-white">{userProfile?.name || 'Pengguna'}</span>
-                <span className="text-xs text-blue-200">{userProfile?.email}</span>
-              </div>
-              <div className="h-8 w-px bg-white/20 mx-2"></div>
-              <button onClick={onLogout} className="text-white hover:text-red-300 p-2 rounded-full hover:bg-white/10 transition-colors" title="Keluar">
-                <LogOut size={20} />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 print:block">
-          {/* KOLOM KIRI: FORM */}
-          <div className="lg:col-span-4 space-y-6 print:hidden">
-            {/* Card 1: Info */}
-            <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-slate-200/60 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-bl-full -z-10"></div>
-              <h2 className="text-lg font-semibold mb-4 text-slate-800 border-b pb-2 flex items-center gap-2">1. Informasi Acara</h2>
-              <div className="space-y-4">
-                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-3 rounded-xl border border-blue-100/50">
-                  <label className="block text-sm font-bold text-blue-800 mb-2 flex items-center gap-2"><Globe size={16} /> Bahasa Naskah</label>
-                  <select name="language" value={formData.language} onChange={handleInputChange} className="w-full p-2.5 border border-white bg-white/70 rounded-lg text-sm outline-none mb-2 focus:ring-2 focus:ring-blue-300">
-                    <option value="id">Bahasa Indonesia</option>
-                    <option value="en">Bahasa Inggris (English)</option>
-                    <option value="regional">Bahasa Daerah</option>
-                  </select>
-                  {formData.language === 'regional' && <input type="text" name="regionalLanguage" value={formData.regionalLanguage} onChange={handleInputChange} placeholder="Nama Bahasa Daerah" className="w-full p-2.5 border border-white bg-white/70 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-300" autoFocus />}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-600 mb-2">Logo Instansi</label>
-                  <div className="flex items-center gap-2">
-                     {formData.logo ? (
-                       <div className="relative group"><img src={formData.logo} alt="Preview" className="h-16 w-16 object-contain border rounded-lg bg-slate-50" /><button onClick={removeLogo} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-sm hover:bg-red-600"><Trash2 size={12} /></button></div>
-                     ) : <div className="h-16 w-16 border-2 border-dashed border-slate-300 rounded-lg flex items-center justify-center text-slate-300 bg-slate-50"><ImageIcon size={24} /></div>}
-                     <label className="flex-1 cursor-pointer">
-                        <div className="flex items-center justify-center gap-2 w-full p-2.5 bg-blue-50 text-blue-600 rounded-lg border border-blue-200 hover:bg-blue-100 text-sm font-medium transition-colors"><Upload size={16} /> Upload Logo</div>
-                        <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
-                     </label>
-                  </div>
-                </div>
-
-                <input type="text" name="speakerTitle" value={formData.speakerTitle} onChange={handleInputChange} placeholder="Jabatan Pembicara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
-                <input type="text" name="eventName" value={formData.eventName} onChange={handleInputChange} placeholder="Nama Acara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
-                
-                <div className="space-y-3 p-3 bg-slate-50/80 rounded-xl border border-slate-200/60">
-                  <input type="text" name="eventDate" value={formData.eventDate} onChange={handleInputChange} placeholder="Hari / Tanggal" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-                  <input type="text" name="eventTime" value={formData.eventTime} onChange={handleInputChange} placeholder="Waktu" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-                  <input type="text" name="eventLocation" value={formData.eventLocation} onChange={handleInputChange} placeholder="Tempat" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-
-                <input type="text" name="eventTheme" value={formData.eventTheme} onChange={handleInputChange} placeholder="Tema Acara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
-                <input type="text" name="speakerName" value={formData.speakerName} onChange={handleInputChange} placeholder="Nama Pembicara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
-                
-                <select name="greetingType" value={formData.greetingType} onChange={handleInputChange} className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50/50">
-                  <option value="formal">Salam Formal</option>
-                  <option value="islamic">Salam Islami</option>
-                  <option value="general">Salam Umum</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-slate-200/60">
-              <div className="flex justify-between items-center mb-4 border-b pb-2">
-                <h2 className="text-lg font-semibold text-slate-800">2. Tamu</h2>
-                <button onClick={addGuest} className="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100 flex items-center gap-1 font-medium transition-colors"><Plus size={14} /> Tambah</button>
-              </div>
-              <div className="space-y-3">
-                {guests.map((guest, idx) => (
-                  <div key={idx} className="flex gap-2 items-start group">
-                    <div className="flex-1 space-y-2">
-                       <input type="text" placeholder="Jabatan" value={guest.title} onChange={(e) => updateGuest(idx, 'title', e.target.value)} className="w-full p-2 text-sm border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
-                       <input type="text" placeholder="Nama (Opsional)" value={guest.name} onChange={(e) => updateGuest(idx, 'name', e.target.value)} className="w-full p-2 text-sm border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
-                    </div>
-                    <button onClick={() => removeGuest(idx)} className="mt-1 text-slate-300 hover:text-red-500 p-2 bg-slate-50 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* AI Generator Cards */}
-            <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-blue-200/60 ring-1 ring-blue-50/50">
-              <div className="flex justify-between items-center mb-4 border-b pb-2"><h2 className="text-lg font-semibold text-slate-800">3. Pembukaan Sambutan</h2></div>
-              <div className="mb-3">
-                  <button onClick={handleAIOpening} disabled={generatingOpening} className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl hover:from-blue-700 hover:to-cyan-700 transition-all font-medium flex items-center justify-center gap-2 shadow-md text-sm disabled:opacity-70 disabled:cursor-not-allowed">
-                    {generatingOpening ? <><Loader2 size={16} className="animate-spin" /> Membuat Pembukaan...</> : <><Sparkles size={16} /> Generate Pembukaan Otomatis</>}
-                  </button>
-              </div>
-              <textarea rows={4} name="openingSpeech" placeholder="Paragraf pembukaan akan muncul di sini..." value={formData.openingSpeech} onChange={handleInputChange} className="w-full p-3 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 placeholder:normal-case bg-slate-50/50 leading-relaxed" />
-            </div>
-
-            <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-indigo-200/60 ring-1 ring-indigo-50/50">
-               <div className="flex justify-between items-center mb-4 border-b pb-2">
-                <h2 className="text-lg font-semibold text-slate-800">4. Isi Sambutan (Pointer)</h2>
-                <button onClick={addPoint} className="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-100 flex items-center gap-1 font-medium transition-colors"><Plus size={14} /> Paragraf</button>
-              </div>
-              <div className="space-y-4">
-                <p className="text-xs text-slate-600 italic bg-amber-50/80 border border-amber-200/50 p-3 rounded-xl leading-relaxed">
-                  💡 Tulis poin/gagasan singkat, lalu klik tombol tongkat ajaib (✨) untuk mengembangkan narasi dengan AI secara otomatis.
-                </p>
-                {points.map((point, idx) => (
-                  <div key={idx} className="flex flex-col gap-3 border-b pb-4 border-slate-100 last:border-0 relative">
-                    <div className="flex items-start gap-2">
-                      <span className="text-slate-400 text-sm mt-3 font-bold w-4">{idx + 1}.</span>
-                      <textarea rows={3} placeholder={`Contoh: Ucapkan terima kasih atas partisipasi aktif masyarakat...`} value={point} onChange={(e) => updatePoint(idx, e.target.value)} className="w-full p-3 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 placeholder:normal-case bg-slate-50/50 leading-relaxed" />
-                      <button onClick={() => removePoint(idx)} className="mt-2 text-slate-300 hover:text-red-500 p-2 bg-slate-50 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
-                    </div>
-                    <div className="pl-7">
-                      <button onClick={() => handleAIGeneratePoint(idx)} disabled={generatingIndex === idx || !point} className="text-xs flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-full hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium border border-indigo-200 shadow-sm w-fit">
-                        {generatingIndex === idx ? <><Loader2 size={14} className="animate-spin" /> Mengembangkan Narasi...</> : <><Sparkles size={14} /> Kembangkan dengan AI</>}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-blue-200/60 ring-1 ring-blue-50/50">
-              <div className="flex justify-between items-center mb-4 border-b pb-2"><h2 className="text-lg font-semibold text-slate-800">5. Penutup Sambutan</h2></div>
-              <div className="mb-3">
-                  <button onClick={handleAIClosing} disabled={generatingClosing} className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl hover:from-blue-700 hover:to-cyan-700 transition-all font-medium flex items-center justify-center gap-2 shadow-md text-sm disabled:opacity-70 disabled:cursor-not-allowed">
-                    {generatingClosing ? <><Loader2 size={16} className="animate-spin" /> Membuat Penutup...</> : <><Sparkles size={16} /> Generate Penutup Sinkron</>}
-                  </button>
-                  <p className="text-[10px] text-slate-500 mt-2 text-center">*Narasi penutup akan disinkronkan dengan poin-poin isi di atas.</p>
-              </div>
-              <textarea rows={4} name="closingSpeech" placeholder="Paragraf penutup akan muncul di sini..." value={formData.closingSpeech} onChange={handleInputChange} className="w-full p-3 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 placeholder:normal-case bg-slate-50/50 leading-relaxed" />
-            </div>
-
-             <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-purple-200/60 ring-1 ring-purple-50/50">
-              <div className="flex justify-between items-center mb-4 border-b pb-2"><h2 className="text-lg font-semibold text-slate-800">6. Pantun Penutup</h2></div>
-              <div className="mb-3">
-                  <button onClick={handleAIPantunGenerate} disabled={generatingPantun} className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all font-medium flex items-center justify-center gap-2 shadow-md text-sm disabled:opacity-70 disabled:cursor-not-allowed">
-                    {generatingPantun ? <><Loader2 size={16} className="animate-spin" /> Merangkai Pantun...</> : <><Sparkles size={16} /> Generate Pantun Otomatis</>}
-                  </button>
-              </div>
-              <textarea rows={4} name="closingPantun" placeholder="Hasil pantun AI akan muncul di sini..." value={formData.closingPantun} onChange={handleInputChange} className="w-full p-4 text-sm border border-purple-100 rounded-xl outline-none font-medium italic text-slate-700 uppercase placeholder:normal-case bg-purple-50/30 leading-relaxed text-center" />
-            </div>
-          </div>
-
-          {/* KOLOM KANAN: PREVIEW */}
-          <div className="lg:col-span-8 flex flex-col gap-4">
-            <div className="bg-white/95 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-slate-200/60 flex flex-wrap items-center justify-between gap-4 print:hidden sticky top-4 z-20">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 bg-slate-100/80 px-4 py-2 rounded-xl">
-                  <span className="text-xs font-bold text-slate-600 tracking-wider">UKURAN KERTAS:</span>
-                  <span className="px-3 py-1 text-xs font-bold text-blue-700 bg-white shadow-sm rounded-lg border border-slate-200">{paperConfig.size}</span>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                {/* Tombol Simpan Ke Riwayat */}
-                <button onClick={handleSaveToHistory} disabled={isSaving} className="flex items-center gap-2 px-5 py-2.5 bg-blue-100 text-blue-700 rounded-xl hover:bg-blue-200 text-sm font-semibold transition-all shadow-sm hover:shadow-md transform hover:-translate-y-0.5 disabled:opacity-70">
-                  {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} Simpan Riwayat
-                </button>
-                <button onClick={handleDownloadWord} className="flex items-center gap-2 px-6 py-2.5 bg-slate-800 text-white rounded-xl hover:bg-slate-900 text-sm font-semibold transition-all shadow-md hover:shadow-lg transform hover:-translate-y-0.5"><FileType size={18} /> Export Word</button>
-              </div>
-            </div>
-
-            {notification && <div className="fixed bottom-6 right-6 bg-slate-800/90 backdrop-blur-md border border-slate-600 text-white px-6 py-3 rounded-2xl shadow-2xl text-sm animate-bounce z-50 flex items-center gap-2 font-medium">{notification}</div>}
-
-             {/* Preview Area Container */}
-             <div className="flex justify-center overflow-x-auto pb-10 bg-slate-200/50 rounded-3xl p-4 md:p-8 min-h-[80vh] print:bg-white print:p-0 print:overflow-visible border border-slate-200 shadow-inner">
-              <div id="print-area" className={`bg-white shadow-2xl origin-top transition-all duration-300 flex flex-col items-center print:shadow-none print:m-0 print:border-none uppercase ${paperConfig.size === 'A4' ? 'w-[210mm] min-h-[297mm]' : 'w-[148mm] min-h-[210mm]'} print:w-full print:h-auto`} style={{ padding: paperConfig.size === 'A4' ? '2.5cm' : '1.5cm' }}>
-                <div ref={previewRef} className="w-full">
-                    {renderSpeechContent()}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* --- MODAL RIWAYAT NASKAH --- */}
-      {isHistoryOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 print:hidden">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsHistoryOpen(false)}></div>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col relative z-10 overflow-hidden transform transition-all">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/80 backdrop-blur-md">
-              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <History className="text-blue-600" /> Riwayat Naskah Anda
-              </h2>
-              <button onClick={() => setIsHistoryOpen(false)} className="text-slate-400 hover:text-slate-700 p-2 rounded-full hover:bg-slate-200 transition-colors">
-                <X size={24} />
-              </button>
-            </div>
-            
-            <div className="p-6 overflow-y-auto flex-1 bg-slate-50/30">
-              {historyList.length === 0 ? (
-                <div className="text-center py-16 text-slate-500">
-                  <History className="mx-auto h-16 w-16 text-slate-300 mb-4 opacity-50" />
-                  <p className="text-lg font-medium">Belum ada riwayat naskah.</p>
-                  <p className="text-sm mt-1">Simpan naskah yang telah Anda buat untuk melihatnya di sini.</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {historyList.map(item => (
-                    <div key={item.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between gap-4 items-start sm:items-center hover:border-blue-400 hover:shadow-md transition-all">
-                      <div className="flex-1">
-                        <h3 className="font-bold text-slate-800 text-lg line-clamp-1">{item.formData.eventName || 'Tanpa Nama Acara'}</h3>
-                        <p className="text-sm text-slate-500 font-medium">
-                          {new Date(item.createdAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' })}
-                        </p>
-                        {item.formData.eventTheme && (
-                          <p className="text-sm text-slate-400 mt-2 line-clamp-1 italic">"{item.formData.eventTheme}"</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 w-full sm:w-auto">
-                        <button onClick={() => handleLoadHistoryItem(item)} className="flex-1 sm:flex-none px-5 py-2 bg-blue-50 text-blue-700 font-bold text-sm rounded-xl hover:bg-blue-100 transition-colors border border-blue-100">
-                          Buka Naskah
-                        </button>
-                        <button onClick={() => handleDeleteHistory(item.id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 rounded-xl transition-all" title="Hapus">
-                          <Trash2 size={20} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-      
-      <style>{`
-        @media print {
-          @page { margin: 2.5cm; size: ${paperConfig.size === 'A5' ? 'A5' : 'A4'}; }
-          body { visibility: hidden; background: white; margin: 0; padding: 0; }
-          #print-area, #print-area * { visibility: visible; }
-          #print-area { position: absolute; left: 0; top: 0; width: 100% !important; margin: 0 !important; padding: 0 !important; overflow: visible !important; height: auto !important; box-shadow: none !important; border: none !important; }
-          .min-h-screen { min-height: 0 !important; height: auto !important; }
-          .max-w-6xl { max-width: none !important; }
-          .min-h-\\[80vh\\] { min-height: 0 !important; height: auto !important; }
-          .print\\:hidden { display: none !important; }
-        }
-        .prose p { margin-bottom: 1.5rem; }
-        .uppercase { text-transform: uppercase !important; }
-        ${paperConfig.size === 'A5' ? `.prose { font-size: 10pt !important; line-height: 1.4 !important; } .prose h2 { font-size: 14pt !important; margin-bottom: 0.5rem !important; }` : ''}
-      `}</style>
-    </div>
-  );
-};
-
-// ==========================================
-// AUTHENTICATION & ROUTING LAYER
-// ==========================================
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [userProfile, setUserProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [view, setView] = useState('login'); // 'login', 'register', 'forgot'
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        setUserProfile({ email: currentUser.email, name: currentUser.displayName || 'Pengguna' });
-      }
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleLogout = async () => {
-    await signOut(auth);
-  };
-
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-900"><Loader2 className="animate-spin text-cyan-400" size={40} /></div>;
-
-  if (user) {
-    // PASS user.uid AS userId to MainApp
-    return <MainApp onLogout={handleLogout} userProfile={userProfile} userId={user.uid} />;
-  }
-
-  return (
-    <div className="min-h-screen relative flex flex-col justify-center items-center p-4 overflow-hidden bg-slate-900">
-      
-      {/* FUTURISTIC ABSTRACT BACKGROUND */}
-      <div className="absolute inset-0 z-0">
-         <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-blue-600 rounded-full mix-blend-screen filter blur-[120px] opacity-30 animate-pulse"></div>
-         <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] bg-cyan-500 rounded-full mix-blend-screen filter blur-[100px] opacity-20"></div>
-         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03] mix-blend-overlay"></div>
-      </div>
-
-      <div className="w-full max-w-md bg-white/10 backdrop-blur-xl rounded-3xl shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] border border-white/20 p-8 z-10 relative text-white">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center p-4 bg-white/10 rounded-2xl mb-5 shadow-inner border border-white/10 backdrop-blur-md">
-            <FilePenLine className="w-12 h-12 text-cyan-400 drop-shadow-lg" />
-          </div>
-          <h1 className="text-3xl font-extrabold tracking-tight drop-shadow-md">PidatoPimpinan.AI</h1>
-          <p className="text-blue-200/80 text-sm mt-2 font-medium">Aplikasi Pembuat Naskah Sambutan Otomatis</p>
-        </div>
-        
-        {view === 'login' && (
-           <LoginForm setView={setView} />
-        )}
-        {view === 'register' && (
-           <>
-             <h2 className="text-xl font-semibold mb-6 text-center tracking-wide">Registrasi</h2>
-             <RegisterForm setView={setView} />
-           </>
-        )}
-        {view === 'forgot' && (
-           <>
-             <h2 className="text-xl font-semibold mb-6 text-center tracking-wide">Lupa Password</h2>
-             <ForgotPasswordForm setView={setView} />
-           </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function LoginForm({ setView }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    setError('');
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      setError('Login gagal. Periksa email dan password Anda.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleLogin} className="space-y-5">
-      {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm">{error}</div>}
-      <div>
-        <label className="block text-sm font-medium text-blue-100 mb-1.5">Email</label>
-        <div className="relative">
-          <Mail className="absolute left-3.5 top-3 text-blue-300" size={18} />
-          <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="admin@instansi.go.id" />
-        </div>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-blue-100 mb-1.5">Password</label>
-        <div className="relative">
-          <Lock className="absolute left-3.5 top-3 text-blue-300" size={18} />
-          <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="••••••••" />
-        </div>
-      </div>
-      <div className="flex justify-end">
-        <button type="button" onClick={() => setView('forgot')} className="text-sm text-cyan-400 hover:text-cyan-300 hover:underline transition-colors">Lupa password?</button>
-      </div>
-      <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
-        {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Login'}
-      </button>
-      <p className="text-center text-sm text-slate-300 mt-6">
-        Belum punya akun? <button type="button" onClick={() => setView('register')} className="text-cyan-400 font-bold hover:underline ml-1">Registrasi</button>
-      </p>
-    </form>
-  );
-}
-
-function RegisterForm({ setView }) {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [accessCode, setAccessCode] = useState('');
-  const [error, setError] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const WA_URL = "https://wa.me/6287838960454?text=Halo%20Admin,%20saya%20ingin%20meminta%20kode%20akses%20pendaftaran%20aplikasi%20PidatoPimpinan.AI";
-
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    setError('');
-    setIsSubmitting(true);
-    
-    try {
-      // 1. Validasi kode akses ke Google Apps Script terlebih dahulu
-      if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL === "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
-         throw new Error("URL Google Apps Script belum diatur.");
-      }
-
-      const response = await fetch(GAS_WEB_APP_URL, {
+    // --- Utility: Fetch via Google Apps Script for Gemini API ---
+    const fetchGeminiWithBackoff = async (prompt) => {
+      const options = {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'validateCode', code: accessCode })
-      });
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
+        body: JSON.stringify({ action: 'generateAI', prompt: prompt })
+      };
       
-      const resData = await response.json();
-      if (!resData.success) {
-        setError(resData.error || 'Kode akses tidak valid.');
-        setIsSubmitting(false);
-        return;
+      const delays = [1000, 2000, 4000, 8000, 16000];
+      for (let i = 0; i < 5; i++) {
+        try {
+          if(!GAS_WEB_APP_URL || GAS_WEB_APP_URL === "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
+             throw new Error("URL Google Apps Script belum diatur.");
+          }
+
+          const response = await fetch(GAS_WEB_APP_URL, options);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: Gagal menghubungi server backend.`);
+          }
+          const resData = await response.json();
+          
+          if (!resData.success) {
+             throw new Error(resData.error || "Gagal memproses data AI di backend.");
+          }
+          
+          const text = resData.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!text) {
+            throw new Error("Respons AI kosong. Kemungkinan diblokir oleh filter keamanan.");
+          }
+          
+          return text;
+        } catch (error) {
+          if (i === 4) {
+            throw new Error("Gagal terhubung ke AI: " + error.message);
+          }
+          await new Promise(res => setTimeout(res, delays[i]));
+        }
+      }
+    };
+
+    function MainApp({ onLogout, userProfile, userId }) {
+      const [formData, setFormData] = useState({
+        logo: null,
+        eventName: '',
+        eventTheme: '',
+        eventDate: '',
+        eventTime: '',
+        eventLocation: '',
+        speakerName: '',
+        speakerTitle: '',
+        greetingType: 'formal',
+        closingPantun: '',
+        language: 'id',
+        regionalLanguage: '',
+        openingSpeech: '', 
+        closingSpeech: '',
+      });
+
+      const [paperConfig, setPaperConfig] = useState({ size: 'A4' });
+      const [guests, setGuests] = useState([{ name: '', title: '' }]);
+      const [points, setPoints] = useState(['']);
+
+      const [generatingIndex, setGeneratingIndex] = useState(null);
+      const [generatingPantun, setGeneratingPantun] = useState(false);
+      const [generatingOpening, setGeneratingOpening] = useState(false);
+      const [generatingClosing, setGeneratingClosing] = useState(false);
+      const [isSaving, setIsSaving] = useState(false);
+      
+      const [historyList, setHistoryList] = useState([]);
+      const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
+      const previewRef = useRef(null);
+      const [notification, setNotification] = useState('');
+
+      useEffect(() => {
+        if (!formData.openingSpeech && formData.eventName) {
+           const defaultIntro = `PUJI DAN SYUKUR MARILAH KITA PANJATKAN KE HADIRAT ALLAH SWT, KARENA ATAS NIKMAT DAN KARUNIA-NYA KITA DAPAT HADIR DALAM ACARA ${formData.eventName.toUpperCase()} DENGAN TEMA "${formData.eventTheme.toUpperCase()}".`;
+           setFormData(prev => ({ ...prev, openingSpeech: defaultIntro }));
+        }
+      }, [formData.eventName, formData.eventTheme]);
+
+      useEffect(() => {
+        if (isHistoryOpen) {
+          fetchHistory();
+        }
+      }, [isHistoryOpen]);
+
+      const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+      };
+
+      const handleLogoUpload = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          if (file.size > 500 * 1024) {
+            showNotification("Gagal: Ukuran logo maksimal 500KB.");
+            return;
+          }
+          const reader = new FileReader();
+          reader.onloadend = () => setFormData(prev => ({ ...prev, logo: reader.result }));
+          reader.readAsDataURL(file);
+        }
+      };
+
+      const removeLogo = () => setFormData(prev => ({ ...prev, logo: null }));
+      const addGuest = () => setGuests([...guests, { name: '', title: '' }]);
+      const removeGuest = (index) => setGuests(guests.filter((_, i) => i !== index));
+      const updateGuest = (index, field, value) => {
+        const newGuests = [...guests];
+        newGuests[index][field] = value;
+        setGuests(newGuests);
+      };
+
+      const addPoint = () => setPoints([...points, '']);
+      const removePoint = (index) => setPoints(points.filter((_, i) => i !== index));
+      const updatePoint = (index, value) => {
+        const newPoints = [...points];
+        newPoints[index] = value;
+        setPoints(newPoints);
+      };
+
+      const getLanguageInstruction = () => {
+        return formData.language === 'en' 
+            ? "Bahasa Inggris (English)" 
+            : formData.language === 'regional' 
+                ? `Bahasa Daerah (${formData.regionalLanguage}), jika sulit gunakan Bahasa Indonesia formal` 
+                : "Bahasa Indonesia Formal";
+      };
+
+      const handleAIOpening = async () => {
+        if (!formData.eventName) return showNotification("Isi nama acara terlebih dahulu.");
+        setGeneratingOpening(true);
+        try {
+            const prompt = `Buatkan paragraf PEMBUKAAN pidato resmi yang menarik dan relevan. Konteks: Acara: ${formData.eventName}, Tema: ${formData.eventTheme}, Waktu/Tempat: ${formData.eventDate}, ${formData.eventLocation}, Bahasa: ${getLanguageInstruction()}. Instruksi: Mulai dengan Puji Syukur. Sebutkan tujuan acara secara singkat. Gaya bahasa: Pejabat, wibawa, hangat. Output: HANYA teks paragraf pembuka (tanpa salam pembuka). Gunakan HURUF KAPITAL.`;
+            const text = await fetchGeminiWithBackoff(prompt);
+            if (text) setFormData(prev => ({ ...prev, openingSpeech: text.trim() }));
+        } catch (error) { showNotification(error.message || "Gagal membuat pembukaan."); } 
+        finally { setGeneratingOpening(false); }
+      };
+
+      const handleAIGeneratePoint = async (index) => {
+        const pointer = points[index];
+        if (!pointer || pointer.trim().length < 3) return showNotification("Tuliskan poin minimal 3 karakter.");
+        setGeneratingIndex(index);
+        try {
+          const prompt = `Kembangkan poin ini jadi 1 paragraf pidato formal pejabat: "${pointer}". Konteks: ${formData.eventName}. Bahasa: ${getLanguageInstruction()}. HANYA TEKS PARAGRAF, HURUF KAPITAL.`;
+          const text = await fetchGeminiWithBackoff(prompt);
+          if (text) updatePoint(index, text.trim());
+        } catch (error) { showNotification(error.message || "Gagal membuat teks."); } 
+        finally { setGeneratingIndex(null); }
+      };
+
+      const handleAIClosing = async () => {
+        const contentContext = points.filter(p => p.trim() !== '').join('. ');
+        if (!contentContext) return showNotification("Isi poin sambutan dulu agar penutup sinkron.");
+        setGeneratingClosing(true);
+        try {
+            const prompt = `Buatkan paragraf PENUTUP pidato resmi yang SINKRON dengan isi materi: "${contentContext}". Acara: ${formData.eventName}. Instruksi: Berikan kesimpulan singkat/harapan. Ajak hadirin berkolaborasi. Ucapkan terima kasih dan maaf. Bahasa: ${getLanguageInstruction()}. Output: HANYA teks paragraf penutup. Gunakan HURUF KAPITAL.`;
+            const text = await fetchGeminiWithBackoff(prompt);
+            if (text) setFormData(prev => ({ ...prev, closingSpeech: text.trim() }));
+        } catch (error) { showNotification(error.message || "Gagal membuat penutup."); } 
+        finally { setGeneratingClosing(false); }
+      };
+
+      const handleAIPantunGenerate = async () => {
+        const contextText = points.filter(p => p.trim() !== '').join('. ');
+        setGeneratingPantun(true);
+        try {
+            const prompt = `Buatkan satu bait PANTUN PENUTUP (4 baris) untuk pidato acara: ${formData.eventName}. Isi pidato: "${contextText}". Bahasa: ${formData.language === 'en' ? 'Inggris' : 'Indonesia'}. HANYA TEKS PANTUN KAPITAL.`;
+            const text = await fetchGeminiWithBackoff(prompt);
+            if (text) setFormData(prev => ({ ...prev, closingPantun: text.trim() }));
+        } catch (error) { showNotification(error.message || "Gagal membuat pantun."); } 
+        finally { setGeneratingPantun(false); }
+      };
+
+      const fetchHistory = async () => {
+        try {
+          const querySnapshot = await getDocs(collection(db, 'artifacts', appId, 'users', userId, 'speeches'));
+          const data = [];
+          querySnapshot.forEach((doc) => {
+            data.push({ id: doc.id, ...doc.data() });
+          });
+          data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+          setHistoryList(data);
+        } catch (error) {
+          console.error("Error fetching history:", error);
+          showNotification("Gagal memuat riwayat naskah.");
+        }
+      };
+
+      const handleSaveToHistory = async () => {
+        if (!formData.eventName) {
+          showNotification("Isi nama acara terlebih dahulu untuk menyimpan!");
+          return;
+        }
+        setIsSaving(true);
+        try {
+          const speechData = {
+            formData,
+            guests,
+            points,
+            createdAt: new Date().toISOString()
+          };
+          const docRef = doc(collection(db, 'artifacts', appId, 'users', userId, 'speeches'));
+          await setDoc(docRef, speechData);
+          showNotification("Naskah berhasil disimpan ke Riwayat!");
+          if (isHistoryOpen) fetchHistory();
+        } catch (error) {
+          console.error("Error saving history:", error);
+          showNotification("Gagal menyimpan naskah.");
+        } finally {
+          setIsSaving(false);
+        }
+      };
+
+      const handleDeleteHistory = async (id) => {
+        try {
+          await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'speeches', id));
+          setHistoryList(prev => prev.filter(item => item.id !== id));
+          showNotification("Riwayat berhasil dihapus.");
+        } catch (error) {
+          console.error("Error deleting history:", error);
+          showNotification("Gagal menghapus riwayat.");
+        }
+      };
+
+      const handleLoadHistoryItem = (item) => {
+        setFormData(item.formData);
+        setGuests(item.guests || [{ name: '', title: '' }]);
+        setPoints(item.points || ['']);
+        setIsHistoryOpen(false);
+        showNotification("Naskah berhasil dimuat dari Riwayat.");
+      };
+
+      const getGreetings = () => formData.language === 'en' ? "BISMILLAAHIRRAHMAANIRRAHIIM\nASSALAMU’ALAIKUM WR. WB.\nPEACE BE UPON YOU, AND ALLAH'S MERCY AND BLESSINGS." : "BISMILLAAHIRRAHMAANIRRAHIIM\nASSALAAMU’ALAIKUM WR. WB.\nSALAM SEJAHTERA UNTUK KITA SEMUA,\nSAMPURASUN.";
+      const getGuestPrefix = (index) => formData.language === 'en' ? (index === 0 ? "THE HONORABLE, " : "DISTINGUISHED, ") : (index === 0 ? "YTH. " : "YSH. ");
+      const getParticipantPrefix = () => formData.language === 'en' ? "AND BELOVED AUDIENCE." : "YSB. PARA PESERTA,\nHADIRIN UNDANGAN YANG SAYA HORMATI.";
+      const getInterjections = () => formData.language === 'en' ? ["DISTINGUISHED GUESTS,", "HAPPY ATTENDEES,", "BELOVED AUDIENCE,"] : ["HADIRIN YANG SAYA HORMATI,", "HADIRIN YANG BERBAHAGIA,", "HADIRIN YANG SAYA BANGGAKAN,"];
+      const getFinalThanks = () => formData.language === 'en' ? "THANK YOU." : "TERIMA KASIH.\nBILLAAHITTAUFIQ WALHIDAYAH,\nWASSALAAMU’ALAIKUM WR. WB.";
+
+      const generateSpeechHTML = () => {
+        const eName = (formData.eventName || '[NAMA ACARA]').toUpperCase();
+        const eDate = (formData.eventDate || '[TANGGAL]').toUpperCase();
+        const eTime = (formData.eventTime || '[WAKTU]').toUpperCase();
+        const eLoc = (formData.eventLocation || '[TEMPAT]').toUpperCase();
+        const sTitle = (formData.speakerTitle || '[JABATAN PEMBICARA]').toUpperCase();
+        const sName = (formData.speakerName || '[NAMA PEMBICARA]').toUpperCase();
+        const gType = getGreetings().toUpperCase();
+        const L_TITLE = formData.language === 'en' ? "WELCOME SPEECH" : "SAMBUTAN";
+        const L_ONEVENT = formData.language === 'en' ? "ON THE OCCASION OF" : "PADA ACARA";
+        const L_DATE = formData.language === 'en' ? "DAY / DATE" : "HARI / TANGGAL";
+        const L_TIME = formData.language === 'en' ? "TIME" : "WAKTU";
+        const L_LOC = formData.language === 'en' ? "VENUE" : "TEMPAT";
+        const interjections = getInterjections();
+        const bodyStyle = "font-family: Arial, sans-serif; font-size: 16pt; line-height: 1.5; color: #000000;";
+        const headerStyle = "text-align: center; font-weight: bold; margin-bottom: 20px;";
+        const justifyStyle = "text-align: justify;";
+        const indentStyle = "text-indent: 1.27cm;";
+
+        return `
+          <div style="${bodyStyle}">
+            <div style="${headerStyle}">
+              ${formData.logo ? `<div style="text-align: center; margin-bottom: 10px;"><img src="${formData.logo}" width="100" style="width: 100px; height: auto;" /></div>` : ''}
+              <p style="margin: 0;">${L_TITLE}</p><p style="margin: 0;">${sTitle}</p><p style="margin: 0;">${L_ONEVENT}</p><p style="margin: 0; margin-bottom: 20px;">${eName}</p>
+              <table align="center" style="margin: 0 auto; width: 90%; font-family: Arial, sans-serif; font-size: 16pt; font-weight: bold; border: none;">
+                <tr><td style="width: 200px;">${L_DATE}</td><td>: ${eDate}</td></tr><tr><td>${L_TIME}</td><td>: ${eTime}</td></tr><tr><td>${L_LOC}</td><td>: ${eLoc}</td></tr>
+              </table>
+            </div>
+            <hr style="border: 1px solid #000; margin: 20px 0;" />
+            <div style="${justifyStyle}">
+              <p style="white-space: pre-line;">${gType}</p><br/>
+              <ul style="list-style-type: none; padding-left: 0; margin: 0;">
+                ${guests.map((g, i) => `<li>${getGuestPrefix(i)} ${g.name ? `${(g.title || '').toUpperCase()} <strong>${(g.name || '').toUpperCase()}</strong>` : (g.title || '').toUpperCase()}</li>`).join('')}
+                <li style="white-space: pre-line;">${getParticipantPrefix()}</li>
+              </ul><br/>
+              <p style="${indentStyle}">${formData.openingSpeech || '[Pembukaan belum dibuat]'}</p><br/>
+              <p style="${indentStyle} margin-bottom: 10px;">${interjections[0]}</p>
+              ${points.map(p => `<p style="${indentStyle}">${(p || '').toUpperCase()}</p>`).join('')}<br/>
+              <p style="${indentStyle} margin-bottom: 10px;">${interjections[1]}</p><p style="${indentStyle} margin-bottom: 10px;">${interjections[2]}</p>
+              <p style="${indentStyle}">${formData.closingSpeech || '[Penutup belum dibuat]'}</p>
+              ${formData.closingPantun ? `<div style="text-align: center; font-style: italic; margin: 20px 0;">${formData.closingPantun.toUpperCase().replace(/\n/g, '<br/>')}</div>` : ''}<br/>
+              <div style="text-align: center; margin-top: 30px;"><p style="white-space: pre-line;">${getFinalThanks()}</p><br/><br/><br/><p style="font-weight: bold;">${sTitle}</p><p style="font-weight: bold;">${sName}</p></div>
+            </div>
+          </div>
+        `;
+      };
+
+      const handleDownloadWord = () => {
+        const htmlContent = generateSpeechHTML();
+        const sourceHTML = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Naskah Sambutan</title></head><body>" + htmlContent + "</body></html>";
+        const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
+        const fileDownload = document.createElement("a");
+        document.body.appendChild(fileDownload);
+        fileDownload.href = source;
+        fileDownload.download = `Sambutan-${formData.eventName.replace(/\s+/g, '-') || 'Naskah'}.doc`;
+        fileDownload.click();
+        document.body.removeChild(fileDownload);
+        showNotification('Sedang mengunduh file Word...');
+      };
+
+      const showNotification = (msg) => { setNotification(msg); setTimeout(() => setNotification(''), 3000); };
+
+      const renderSpeechContent = () => {
+        const eName = (formData.eventName || '[NAMA ACARA]').toUpperCase();
+        const L_TITLE = formData.language === 'en' ? "WELCOME SPEECH" : "SAMBUTAN";
+        const L_ONEVENT = formData.language === 'en' ? "ON THE OCCASION OF" : "PADA ACARA";
+        const L_DATE = formData.language === 'en' ? "DAY / DATE" : "HARI / TANGGAL";
+        const L_TIME = formData.language === 'en' ? "TIME" : "WAKTU";
+        const L_LOC = formData.language === 'en' ? "VENUE" : "TEMPAT";
+        const interjections = getInterjections();
+
+        return (
+        <div className="prose max-w-none text-slate-900 font-sans text-[16pt] uppercase text-justify" style={{ fontFamily: 'Arial, Helvetica, sans-serif', lineHeight: '1.5' }}>
+          <div className="text-center mb-10 pb-6 border-b-4 border-double border-slate-800">
+            {formData.logo ? <img src={formData.logo} alt="Logo" className="h-24 mx-auto mb-6 object-contain" /> : <div className="h-24 w-24 mx-auto mb-6 bg-slate-100 border-2 border-dashed border-slate-300 rounded-full flex items-center justify-center text-slate-400 text-xs text-center p-2 print:hidden text-[10pt]">[LOGO]</div>}
+            <div className="mb-4"><p className="mb-1">{L_TITLE}</p><p className="font-bold">{formData.speakerTitle || '[JABATAN]'}</p></div>
+            <div className="mb-8"><p className="mb-1">{L_ONEVENT}</p><p className="font-bold">{eName}</p></div>
+            <div className="inline-block text-left w-full print:p-0">
+              <table className="mx-auto w-full md:w-[90%]">
+                <tbody>
+                    <tr><td className="w-[200px] align-top">{L_DATE}</td><td className="w-[10px]">:</td><td>{formData.eventDate || '...'}</td></tr>
+                    <tr><td className="align-top">{L_TIME}</td><td>:</td><td>{formData.eventTime || '...'}</td></tr>
+                    <tr><td className="align-top">{L_LOC}</td><td>:</td><td>{formData.eventLocation || '...'}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="mb-6 whitespace-pre-line font-medium text-left">{getGreetings()}</div>
+          <div className="mb-8 text-left">
+            <ul className="list-none pl-0 space-y-2">
+              {guests.some(g => g.name || g.title) ? guests.map((guest, i) => <li key={i}>{getGuestPrefix(i)} {guest.title} {guest.name && <strong>{guest.name}</strong>}</li>) : <li className="text-slate-300 italic">[DAFTAR TAMU]</li>}
+               <li className="mt-2 whitespace-pre-line">{getParticipantPrefix()}</li>
+            </ul>
+          </div>
+          <div className="mb-6 text-justify"><p className="indent-16 whitespace-pre-line">{formData.openingSpeech || <span className="text-slate-400 italic normal-case">[Pembukaan belum dibuat. Isi form di kiri atau gunakan AI]</span>}</p></div>
+          <div className="mb-4 text-left indent-16"><p>{interjections[0]}</p></div>
+          <div className="mb-6 text-justify">{points.some(p => p !== '') ? points.map((point, i) => point && <p key={i} className="mb-4 indent-16">{point}</p>) : <p className="text-slate-300 italic p-6 border-2 border-dashed border-slate-200 rounded-lg text-center normal-case">Tuliskan poin utama sambutan di sini.</p>}</div>
+          <div className="mb-4 text-left indent-16"><p>{interjections[1]}</p></div>
+          <div className="mb-12 text-justify">
+            <p className="mb-4 text-left indent-16">{interjections[2]}</p>
+            <p className="indent-16 whitespace-pre-line">{formData.closingSpeech || <span className="text-slate-400 italic normal-case">[Penutup belum dibuat. Isi form di kiri atau gunakan AI]</span>}</p>
+            {formData.closingPantun && <div className="my-8 text-center italic font-semibold text-slate-800 whitespace-pre-line border-y-2 border-slate-100 py-6 bg-slate-50 rounded-lg">{formData.closingPantun}</div>}
+          </div>
+          <div>
+            <div className="text-center mt-12 mb-8 whitespace-pre-line">{getFinalThanks()}</div>
+            <div className="text-center"><p className="mb-20 font-bold">{formData.speakerTitle || (formData.language === 'en' ? 'SPEAKER' : 'PEMBICARA')}</p><p className="font-bold inline-block min-w-[220px] pb-1">{formData.speakerName || '( NAMA TERANG )'}</p></div>
+          </div>
+        </div>
+        );
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-50 font-sans print:bg-white print:p-0 relative">
+          
+          {/* FUTURISTIC HEADER BANNER */}
+          <div className="absolute top-0 left-0 w-full h-72 bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800 print:hidden z-0 overflow-hidden">
+             <div className="absolute top-[-20%] right-[-10%] w-[500px] h-[500px] bg-cyan-500 rounded-full mix-blend-screen filter blur-[100px] opacity-20"></div>
+             <div className="absolute top-[20%] left-[-10%] w-[400px] h-[400px] bg-blue-600 rounded-full mix-blend-screen filter blur-[80px] opacity-20"></div>
+             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 mix-blend-overlay"></div>
+          </div>
+
+          <div className="relative z-10 p-4 md:p-8 pt-8 md:pt-12">
+            <div className="max-w-6xl mx-auto mb-10 print:hidden flex flex-col md:flex-row items-center justify-between gap-6">
+              <div className="text-center md:text-left flex items-center gap-4">
+                <div className="bg-white/10 p-3 rounded-2xl backdrop-blur-md border border-white/20 shadow-lg">
+                  <FilePenLine className="w-10 h-10 text-cyan-300" />
+                </div>
+                <div>
+                  <h1 className="text-3xl font-bold text-white tracking-tight drop-shadow-md">
+                    PidatoPimpinan.AI
+                  </h1>
+                  <p className="text-blue-200 mt-1 font-medium text-sm">Aplikasi Pembuat Naskah Sambutan Otomatis</p>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-3">
+                {/* Tombol Riwayat */}
+                <button onClick={() => setIsHistoryOpen(true)} className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white px-5 py-2.5 rounded-xl border border-white/20 transition-colors shadow-lg text-sm font-semibold">
+                  <History size={18} /> Riwayat
+                </button>
+                
+                <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-2 rounded-xl shadow-lg ml-2">
+                  <div className="flex flex-col text-right">
+                    <span className="text-sm font-bold text-white">{userProfile?.name || 'Pengguna'}</span>
+                    <span className="text-xs text-blue-200">{userProfile?.email}</span>
+                  </div>
+                  <div className="h-8 w-px bg-white/20 mx-2"></div>
+                  <button onClick={onLogout} className="text-white hover:text-red-300 p-2 rounded-full hover:bg-white/10 transition-colors" title="Keluar">
+                    <LogOut size={20} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 print:block">
+              {/* KOLOM KIRI: FORM */}
+              <div className="lg:col-span-4 space-y-6 print:hidden">
+                {/* Card 1: Info */}
+                <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-slate-200/60 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-bl-full -z-10"></div>
+                  <h2 className="text-lg font-semibold mb-4 text-slate-800 border-b pb-2 flex items-center gap-2">1. Informasi Acara</h2>
+                  <div className="space-y-4">
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-3 rounded-xl border border-blue-100/50">
+                      <label className="block text-sm font-bold text-blue-800 mb-2 flex items-center gap-2"><Globe size={16} /> Bahasa Naskah</label>
+                      <select name="language" value={formData.language} onChange={handleInputChange} className="w-full p-2.5 border border-white bg-white/70 rounded-lg text-sm outline-none mb-2 focus:ring-2 focus:ring-blue-300">
+                        <option value="id">Bahasa Indonesia</option>
+                        <option value="en">Bahasa Inggris (English)</option>
+                        <option value="regional">Bahasa Daerah</option>
+                      </select>
+                      {formData.language === 'regional' && <input type="text" name="regionalLanguage" value={formData.regionalLanguage} onChange={handleInputChange} placeholder="Nama Bahasa Daerah" className="w-full p-2.5 border border-white bg-white/70 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-300" autoFocus />}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-600 mb-2">Logo Instansi</label>
+                      <div className="flex items-center gap-2">
+                         {formData.logo ? (
+                           <div className="relative group"><img src={formData.logo} alt="Preview" className="h-16 w-16 object-contain border rounded-lg bg-slate-50" /><button onClick={removeLogo} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-sm hover:bg-red-600"><Trash2 size={12} /></button></div>
+                         ) : <div className="h-16 w-16 border-2 border-dashed border-slate-300 rounded-lg flex items-center justify-center text-slate-300 bg-slate-50"><ImageIcon size={24} /></div>}
+                         <label className="flex-1 cursor-pointer">
+                            <div className="flex items-center justify-center gap-2 w-full p-2.5 bg-blue-50 text-blue-600 rounded-lg border border-blue-200 hover:bg-blue-100 text-sm font-medium transition-colors"><Upload size={16} /> Upload Logo</div>
+                            <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                         </label>
+                      </div>
+                    </div>
+
+                    <input type="text" name="speakerTitle" value={formData.speakerTitle} onChange={handleInputChange} placeholder="Jabatan Pembicara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
+                    <input type="text" name="eventName" value={formData.eventName} onChange={handleInputChange} placeholder="Nama Acara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
+                    
+                    <div className="space-y-3 p-3 bg-slate-50/80 rounded-xl border border-slate-200/60">
+                      <input type="text" name="eventDate" value={formData.eventDate} onChange={handleInputChange} placeholder="Hari / Tanggal" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input type="text" name="eventTime" value={formData.eventTime} onChange={handleInputChange} placeholder="Waktu" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input type="text" name="eventLocation" value={formData.eventLocation} onChange={handleInputChange} placeholder="Tempat" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+
+                    <input type="text" name="eventTheme" value={formData.eventTheme} onChange={handleInputChange} placeholder="Tema Acara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
+                    <input type="text" name="speakerName" value={formData.speakerName} onChange={handleInputChange} placeholder="Nama Pembicara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
+                    
+                    <select name="greetingType" value={formData.greetingType} onChange={handleInputChange} className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50/50">
+                      <option value="formal">Salam Formal</option>
+                      <option value="islamic">Salam Islami</option>
+                      <option value="general">Salam Umum</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-slate-200/60">
+                  <div className="flex justify-between items-center mb-4 border-b pb-2">
+                    <h2 className="text-lg font-semibold text-slate-800">2. Tamu</h2>
+                    <button onClick={addGuest} className="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100 flex items-center gap-1 font-medium transition-colors"><Plus size={14} /> Tambah</button>
+                  </div>
+                  <div className="space-y-3">
+                    {guests.map((guest, idx) => (
+                      <div key={idx} className="flex gap-2 items-start group">
+                        <div className="flex-1 space-y-2">
+                           <input type="text" placeholder="Jabatan" value={guest.title} onChange={(e) => updateGuest(idx, 'title', e.target.value)} className="w-full p-2 text-sm border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
+                           <input type="text" placeholder="Nama (Opsional)" value={guest.name} onChange={(e) => updateGuest(idx, 'name', e.target.value)} className="w-full p-2 text-sm border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
+                        </div>
+                        <button onClick={() => removeGuest(idx)} className="mt-1 text-slate-300 hover:text-red-500 p-2 bg-slate-50 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* AI Generator Cards */}
+                <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-blue-200/60 ring-1 ring-blue-50/50">
+                  <div className="flex justify-between items-center mb-4 border-b pb-2"><h2 className="text-lg font-semibold text-slate-800">3. Pembukaan Sambutan</h2></div>
+                  <div className="mb-3">
+                      <button onClick={handleAIOpening} disabled={generatingOpening} className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl hover:from-blue-700 hover:to-cyan-700 transition-all font-medium flex items-center justify-center gap-2 shadow-md text-sm disabled:opacity-70 disabled:cursor-not-allowed">
+                        {generatingOpening ? <><Loader2 size={16} className="animate-spin" /> Membuat Pembukaan...</> : <><Sparkles size={16} /> Generate Pembukaan Otomatis</>}
+                      </button>
+                  </div>
+                  <textarea rows={4} name="openingSpeech" placeholder="Paragraf pembukaan akan muncul di sini..." value={formData.openingSpeech} onChange={handleInputChange} className="w-full p-3 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 placeholder:normal-case bg-slate-50/50 leading-relaxed" />
+                </div>
+
+                <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-indigo-200/60 ring-1 ring-indigo-50/50">
+                   <div className="flex justify-between items-center mb-4 border-b pb-2">
+                    <h2 className="text-lg font-semibold text-slate-800">4. Isi Sambutan (Pointer)</h2>
+                    <button onClick={addPoint} className="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-100 flex items-center gap-1 font-medium transition-colors"><Plus size={14} /> Paragraf</button>
+                  </div>
+                  <div className="space-y-4">
+                    <p className="text-xs text-slate-600 italic bg-amber-50/80 border border-amber-200/50 p-3 rounded-xl leading-relaxed">
+                      💡 Tulis poin/gagasan singkat, lalu klik tombol tongkat ajaib (✨) untuk mengembangkan narasi dengan AI secara otomatis.
+                    </p>
+                    {points.map((point, idx) => (
+                      <div key={idx} className="flex flex-col gap-3 border-b pb-4 border-slate-100 last:border-0 relative">
+                        <div className="flex items-start gap-2">
+                          <span className="text-slate-400 text-sm mt-3 font-bold w-4">{idx + 1}.</span>
+                          <textarea rows={3} placeholder={`Contoh: Ucapkan terima kasih atas partisipasi aktif masyarakat...`} value={point} onChange={(e) => updatePoint(idx, e.target.value)} className="w-full p-3 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 placeholder:normal-case bg-slate-50/50 leading-relaxed" />
+                          <button onClick={() => removePoint(idx)} className="mt-2 text-slate-300 hover:text-red-500 p-2 bg-slate-50 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
+                        </div>
+                        <div className="pl-7">
+                          <button onClick={() => handleAIGeneratePoint(idx)} disabled={generatingIndex === idx || !point} className="text-xs flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-full hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium border border-indigo-200 shadow-sm w-fit">
+                            {generatingIndex === idx ? <><Loader2 size={14} className="animate-spin" /> Mengembangkan Narasi...</> : <><Sparkles size={14} /> Kembangkan dengan AI</>}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-blue-200/60 ring-1 ring-blue-50/50">
+                  <div className="flex justify-between items-center mb-4 border-b pb-2"><h2 className="text-lg font-semibold text-slate-800">5. Penutup Sambutan</h2></div>
+                  <div className="mb-3">
+                      <button onClick={handleAIClosing} disabled={generatingClosing} className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl hover:from-blue-700 hover:to-cyan-700 transition-all font-medium flex items-center justify-center gap-2 shadow-md text-sm disabled:opacity-70 disabled:cursor-not-allowed">
+                        {generatingClosing ? <><Loader2 size={16} className="animate-spin" /> Membuat Penutup...</> : <><Sparkles size={16} /> Generate Penutup Sinkron</>}
+                      </button>
+                      <p className="text-[10px] text-slate-500 mt-2 text-center">*Narasi penutup akan disinkronkan dengan poin-poin isi di atas.</p>
+                  </div>
+                  <textarea rows={4} name="closingSpeech" placeholder="Paragraf penutup akan muncul di sini..." value={formData.closingSpeech} onChange={handleInputChange} className="w-full p-3 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 placeholder:normal-case bg-slate-50/50 leading-relaxed" />
+                </div>
+
+                 <div className="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-purple-200/60 ring-1 ring-purple-50/50">
+                  <div className="flex justify-between items-center mb-4 border-b pb-2"><h2 className="text-lg font-semibold text-slate-800">6. Pantun Penutup</h2></div>
+                  <div className="mb-3">
+                      <button onClick={handleAIPantunGenerate} disabled={generatingPantun} className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all font-medium flex items-center justify-center gap-2 shadow-md text-sm disabled:opacity-70 disabled:cursor-not-allowed">
+                        {generatingPantun ? <><Loader2 size={16} className="animate-spin" /> Merangkai Pantun...</> : <><Sparkles size={16} /> Generate Pantun Otomatis</>}
+                      </button>
+                  </div>
+                  <textarea rows={4} name="closingPantun" placeholder="Hasil pantun AI akan muncul di sini..." value={formData.closingPantun} onChange={handleInputChange} className="w-full p-4 text-sm border border-purple-100 rounded-xl outline-none font-medium italic text-slate-700 uppercase placeholder:normal-case bg-purple-50/30 leading-relaxed text-center" />
+                </div>
+              </div>
+
+              {/* KOLOM KANAN: PREVIEW */}
+              <div className="lg:col-span-8 flex flex-col gap-4">
+                <div className="bg-white/95 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-slate-200/60 flex flex-wrap items-center justify-between gap-4 print:hidden sticky top-4 z-20">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2 bg-slate-100/80 px-4 py-2 rounded-xl">
+                      <span className="text-xs font-bold text-slate-600 tracking-wider">UKURAN KERTAS:</span>
+                      <span className="px-3 py-1 text-xs font-bold text-blue-700 bg-white shadow-sm rounded-lg border border-slate-200">{paperConfig.size}</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    {/* Tombol Simpan Ke Riwayat */}
+                    <button onClick={handleSaveToHistory} disabled={isSaving} className="flex items-center gap-2 px-5 py-2.5 bg-blue-100 text-blue-700 rounded-xl hover:bg-blue-200 text-sm font-semibold transition-all shadow-sm hover:shadow-md transform hover:-translate-y-0.5 disabled:opacity-70">
+                      {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} Simpan Riwayat
+                    </button>
+                    <button onClick={handleDownloadWord} className="flex items-center gap-2 px-6 py-2.5 bg-slate-800 text-white rounded-xl hover:bg-slate-900 text-sm font-semibold transition-all shadow-md hover:shadow-lg transform hover:-translate-y-0.5"><FileType size={18} /> Export Word</button>
+                  </div>
+                </div>
+
+                {notification && <div className="fixed bottom-6 right-6 bg-slate-800/90 backdrop-blur-md border border-slate-600 text-white px-6 py-3 rounded-2xl shadow-2xl text-sm animate-bounce z-50 flex items-center gap-2 font-medium">{notification}</div>}
+
+                 {/* Preview Area Container */}
+                 <div className="flex justify-center overflow-x-auto pb-10 bg-slate-200/50 rounded-3xl p-4 md:p-8 min-h-[80vh] print:bg-white print:p-0 print:overflow-visible border border-slate-200 shadow-inner">
+                  <div id="print-area" className={`bg-white shadow-2xl origin-top transition-all duration-300 flex flex-col items-center print:shadow-none print:m-0 print:border-none uppercase ${paperConfig.size === 'A4' ? 'w-[210mm] min-h-[297mm]' : 'w-[148mm] min-h-[210mm]'} print:w-full print:h-auto`} style={{ padding: paperConfig.size === 'A4' ? '2.5cm' : '1.5cm' }}>
+                    <div ref={previewRef} className="w-full">
+                        {renderSpeechContent()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* --- MODAL RIWAYAT NASKAH --- */}
+          {isHistoryOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 print:hidden">
+              <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsHistoryOpen(false)}></div>
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col relative z-10 overflow-hidden transform transition-all">
+                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/80 backdrop-blur-md">
+                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <History className="text-blue-600" /> Riwayat Naskah Anda
+                  </h2>
+                  <button onClick={() => setIsHistoryOpen(false)} className="text-slate-400 hover:text-slate-700 p-2 rounded-full hover:bg-slate-200 transition-colors">
+                    <X size={24} />
+                  </button>
+                </div>
+                
+                <div className="p-6 overflow-y-auto flex-1 bg-slate-50/30">
+                  {historyList.length === 0 ? (
+                    <div className="text-center py-16 text-slate-500">
+                      <History className="mx-auto h-16 w-16 text-slate-300 mb-4 opacity-50" />
+                      <p className="text-lg font-medium">Belum ada riwayat naskah.</p>
+                      <p className="text-sm mt-1">Simpan naskah yang telah Anda buat untuk melihatnya di sini.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {historyList.map(item => (
+                        <div key={item.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between gap-4 items-start sm:items-center hover:border-blue-400 hover:shadow-md transition-all">
+                          <div className="flex-1">
+                            <h3 className="font-bold text-slate-800 text-lg line-clamp-1">{item.formData.eventName || 'Tanpa Nama Acara'}</h3>
+                            <p className="text-sm text-slate-500 font-medium">
+                              {new Date(item.createdAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' })}
+                            </p>
+                            {item.formData.eventTheme && (
+                              <p className="text-sm text-slate-400 mt-2 line-clamp-1 italic">"{item.formData.eventTheme}"</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 w-full sm:w-auto">
+                            <button onClick={() => handleLoadHistoryItem(item)} className="flex-1 sm:flex-none px-5 py-2 bg-blue-50 text-blue-700 font-bold text-sm rounded-xl hover:bg-blue-100 transition-colors border border-blue-100">
+                              Buka Naskah
+                            </button>
+                            <button onClick={() => handleDeleteHistory(item.id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 rounded-xl transition-all" title="Hapus">
+                              <Trash2 size={20} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          <style>{`
+            @media print {
+              @page { margin: 2.5cm; size: ${paperConfig.size === 'A5' ? 'A5' : 'A4'}; }
+              body { visibility: hidden; background: white; margin: 0; padding: 0; }
+              #print-area, #print-area * { visibility: visible; }
+              #print-area { position: absolute; left: 0; top: 0; width: 100% !important; margin: 0 !important; padding: 0 !important; overflow: visible !important; height: auto !important; box-shadow: none !important; border: none !important; }
+              .min-h-screen { min-height: 0 !important; height: auto !important; }
+              .max-w-6xl { max-width: none !important; }
+              .min-h-\\[80vh\\] { min-height: 0 !important; height: auto !important; }
+              .print\\:hidden { display: none !important; }
+            }
+            .prose p { margin-bottom: 1.5rem; }
+            .uppercase { text-transform: uppercase !important; }
+            ${paperConfig.size === 'A5' ? `.prose { font-size: 10pt !important; line-height: 1.4 !important; } .prose h2 { font-size: 14pt !important; margin-bottom: 0.5rem !important; }` : ''}
+          `}</style>
+        </div>
+      );
+    };
+
+    // ==========================================
+    // AUTHENTICATION & ROUTING LAYER
+    // ==========================================
+
+    function App() {
+      const [user, setUser] = useState(null);
+      const [userProfile, setUserProfile] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [view, setView] = useState('login'); // 'login', 'register', 'forgot'
+
+      useEffect(() => {
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+          setUser(currentUser);
+          if (currentUser) {
+            setUserProfile({ email: currentUser.email, name: currentUser.displayName || 'Pengguna' });
+          }
+          setLoading(false);
+        });
+        return () => unsubscribe();
+      }, []);
+
+      const handleLogout = async () => {
+        await signOut(auth);
+      };
+
+      if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-900"><Loader2 className="animate-spin text-cyan-400" size={40} /></div>;
+
+      if (user) {
+        // PASS user.uid AS userId to MainApp
+        return <MainApp onLogout={handleLogout} userProfile={userProfile} userId={user.uid} />;
       }
 
-      // 2. Jika valid, buat akun di Firebase
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      
-      // 3. Simpan ke Firebase Firestore
-      await setDoc(doc(db, 'artifacts', appId, 'users', userCredential.user.uid, 'profile'), {
-        name, email, role: 'user', createdAt: new Date().toISOString()
-      });
+      return (
+        <div className="min-h-screen relative flex flex-col justify-center items-center p-4 overflow-hidden bg-slate-900">
+          
+          {/* FUTURISTIC ABSTRACT BACKGROUND */}
+          <div className="absolute inset-0 z-0">
+             <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-blue-600 rounded-full mix-blend-screen filter blur-[120px] opacity-30 animate-pulse"></div>
+             <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] bg-cyan-500 rounded-full mix-blend-screen filter blur-[100px] opacity-20"></div>
+             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03] mix-blend-overlay"></div>
+          </div>
 
-      // 4. Rekap data ke Google Sheets melalui API Apps Script (DENGAN CONSOLE LOG)
-      if(GAS_WEB_APP_URL && GAS_WEB_APP_URL !== "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
-         try {
-           const syncRes = await fetch(GAS_WEB_APP_URL, {
-              method: 'POST',
-              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-              body: JSON.stringify({ 
-                  action: 'register', 
-                  name: name,                     
-                  email: email,                   
-                  nomorId: userCredential.user.uid 
-              })
-           });
-           const syncData = await syncRes.json();
-           if(syncData.success) {
-             console.log("✅ Berhasil merekap data pengguna baru ke Google Sheet.");
-           } else {
-             console.error("❌ Gagal merekap ke Google Sheet:", syncData.error);
-           }
-         } catch(err) {
-           console.error("❌ Kesalahan jaringan saat menghubungi Google Script:", err);
-         }
-      }
-
-    } catch (err) {
-      setError(err.message.includes('email-already') ? 'Email sudah terdaftar.' : (err.message || 'Pendaftaran gagal. Coba lagi.'));
-    } finally {
-      setIsSubmitting(false);
+          <div className="w-full max-w-md bg-white/10 backdrop-blur-xl rounded-3xl shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] border border-white/20 p-8 z-10 relative text-white">
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center justify-center p-4 bg-white/10 rounded-2xl mb-5 shadow-inner border border-white/10 backdrop-blur-md">
+                <FilePenLine className="w-12 h-12 text-cyan-400 drop-shadow-lg" />
+              </div>
+              <h1 className="text-3xl font-extrabold tracking-tight drop-shadow-md">PidatoPimpinan.AI</h1>
+              <p className="text-blue-200/80 text-sm mt-2 font-medium">Aplikasi Pembuat Naskah Sambutan Otomatis</p>
+            </div>
+            
+            {view === 'login' && (
+               <LoginForm setView={setView} />
+            )}
+            {view === 'register' && (
+               <>
+                 <h2 className="text-xl font-semibold mb-6 text-center tracking-wide">Registrasi</h2>
+                 <RegisterForm setView={setView} />
+               </>
+            )}
+            {view === 'forgot' && (
+               <>
+                 <h2 className="text-xl font-semibold mb-6 text-center tracking-wide">Lupa Password</h2>
+                 <ForgotPasswordForm setView={setView} />
+               </>
+            )}
+          </div>
+        </div>
+      );
     }
-  };
 
-  return (
-    <form onSubmit={handleRegister} className="space-y-4">
-      {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm">{error}</div>}
-      <div>
-        <label className="block text-sm font-medium text-blue-100 mb-1.5">Nama Lengkap</label>
-        <div className="relative">
-          <User className="absolute left-3.5 top-3 text-blue-300" size={18} />
-          <input type="text" required value={name} onChange={e => setName(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="Nama Anda" />
-        </div>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-blue-100 mb-1.5">Email</label>
-        <div className="relative">
-          <Mail className="absolute left-3.5 top-3 text-blue-300" size={18} />
-          <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="admin@instansi.go.id" />
-        </div>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-blue-100 mb-1.5">Password</label>
-        <div className="relative">
-          <Lock className="absolute left-3.5 top-3 text-blue-300" size={18} />
-          <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="Minimal 6 karakter" minLength={6} />
-        </div>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-blue-100 mb-1.5 flex items-center justify-between">
-          <span>Kode Akses</span>
-          <a href={WA_URL} target="_blank" rel="noreferrer" className="text-xs text-green-400 hover:text-green-300 hover:underline flex items-center gap-1 bg-green-900/30 px-2 py-0.5 rounded-full border border-green-500/30">
-            <MessageCircle size={12} /> Minta Kode ke Admin
-          </a>
-        </label>
-        <div className="relative">
-          <KeyRound className="absolute left-3.5 top-3 text-blue-300" size={18} />
-          <input type="text" required value={accessCode} onChange={e => setAccessCode(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all uppercase" placeholder="Kode Akses" />
-        </div>
-      </div>
-      <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg mt-4 flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
-        {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Sign Up'}
-      </button>
-      <p className="text-center text-sm text-slate-300 mt-6">
-        Sudah punya akun? <button type="button" onClick={() => setView('login')} className="text-cyan-400 font-bold hover:underline ml-1">Login</button>
-      </p>
-    </form>
-  );
-}
+    function LoginForm({ setView }) {
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [error, setError] = useState('');
+      const [isSubmitting, setIsSubmitting] = useState(false);
 
-function ForgotPasswordForm({ setView }) {
-  const [email, setEmail] = useState('');
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+      const handleLogin = async (e) => {
+        e.preventDefault();
+        setIsSubmitting(true);
+        setError('');
+        try {
+          await signInWithEmailAndPassword(auth, email, password);
+        } catch (err) {
+          setError('Login gagal. Periksa email dan password Anda.');
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
 
-  const handleReset = async (e) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    setError('');
-    setMessage('');
-    try {
-      await sendPasswordResetEmail(auth, email);
-      setMessage('Tautan reset password telah dikirim ke email Anda.');
-    } catch (err) {
-      setError('Gagal mengirim email reset. Pastikan email terdaftar.');
-    } finally {
-      setIsSubmitting(false);
+      return (
+        <form onSubmit={handleLogin} className="space-y-5">
+          {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm">{error}</div>}
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-1.5">Email</label>
+            <div className="relative">
+              <Mail className="absolute left-3.5 top-3 text-blue-300" size={18} />
+              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="admin@instansi.go.id" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-1.5">Password</label>
+            <div className="relative">
+              <Lock className="absolute left-3.5 top-3 text-blue-300" size={18} />
+              <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="••••••••" />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button type="button" onClick={() => setView('forgot')} className="text-sm text-cyan-400 hover:text-cyan-300 hover:underline transition-colors">Lupa password?</button>
+          </div>
+          <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
+            {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Login'}
+          </button>
+          <p className="text-center text-sm text-slate-300 mt-6">
+            Belum punya akun? <button type="button" onClick={() => setView('register')} className="text-cyan-400 font-bold hover:underline ml-1">Registrasi</button>
+          </p>
+        </form>
+      );
     }
-  };
 
-  return (
-    <form onSubmit={handleReset} className="space-y-5">
-      {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm">{error}</div>}
-      {message && <div className="bg-green-500/20 border border-green-500/50 text-green-200 p-3 rounded-xl text-sm backdrop-blur-sm">{message}</div>}
-      <p className="text-sm text-blue-100 mb-6 text-center">
-        Masukkan email yang terdaftar. Kami akan mengirimkan tautan untuk mengatur ulang password Anda.
-      </p>
-      <div>
-        <label className="block text-sm font-medium text-blue-100 mb-1.5">Email</label>
-        <div className="relative">
-          <Mail className="absolute left-3.5 top-3 text-blue-300" size={18} />
-          <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="Email Anda" />
-        </div>
-      </div>
-      <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg mt-2 flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
-        {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Kirim Tautan Reset'}
-      </button>
-      <button type="button" onClick={() => setView('login')} className="w-full bg-slate-800/50 border border-slate-600 text-white py-3 rounded-xl font-medium hover:bg-slate-700/50 transition-all mt-4">
-        Kembali ke Login
-      </button>
-    </form>
-  );
-}
+    function RegisterForm({ setView }) {
+      const [name, setName] = useState('');
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [accessCode, setAccessCode] = useState('');
+      const [error, setError] = useState('');
+      const [isSubmitting, setIsSubmitting] = useState(false);
+
+      const WA_URL = "https://wa.me/6287838960454?text=Halo%20Admin,%20saya%20ingin%20meminta%20kode%20akses%20pendaftaran%20aplikasi%20PidatoPimpinan.AI";
+
+      const handleRegister = async (e) => {
+        e.preventDefault();
+        setError('');
+        setIsSubmitting(true);
+        
+        try {
+          // 1. Validasi kode akses ke Google Apps Script terlebih dahulu
+          if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL === "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
+             throw new Error("URL Google Apps Script belum diatur.");
+          }
+
+          const response = await fetch(GAS_WEB_APP_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({ action: 'validateCode', code: accessCode })
+          });
+          
+          const resData = await response.json();
+          if (!resData.success) {
+            setError(resData.error || 'Kode akses tidak valid.');
+            setIsSubmitting(false);
+            return;
+          }
+
+          // 2. Jika valid, buat akun di Firebase
+          const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+          
+          // 3. Simpan ke Firebase Firestore
+          await setDoc(doc(db, 'artifacts', appId, 'users', userCredential.user.uid, 'profile'), {
+            name, email, role: 'user', createdAt: new Date().toISOString()
+          });
+
+          // 4. Rekap data ke Google Sheets melalui API Apps Script (DENGAN CONSOLE LOG)
+          if(GAS_WEB_APP_URL && GAS_WEB_APP_URL !== "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
+             try {
+               const syncRes = await fetch(GAS_WEB_APP_URL, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                  body: JSON.stringify({ 
+                      action: 'register', 
+                      name: name,                     
+                      email: email,                   
+                      nomorId: userCredential.user.uid 
+                  })
+               });
+               const syncData = await syncRes.json();
+               if(syncData.success) {
+                 console.log("✅ Berhasil merekap data pengguna baru ke Google Sheet.");
+               } else {
+                 console.error("❌ Gagal merekap ke Google Sheet:", syncData.error);
+               }
+             } catch(err) {
+               console.error("❌ Kesalahan jaringan saat menghubungi Google Script:", err);
+             }
+          }
+
+        } catch (err) {
+          setError(err.message.includes('email-already') ? 'Email sudah terdaftar.' : (err.message || 'Pendaftaran gagal. Coba lagi.'));
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
+
+      return (
+        <form onSubmit={handleRegister} className="space-y-4">
+          {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm">{error}</div>}
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-1.5">Nama Lengkap</label>
+            <div className="relative">
+              <User className="absolute left-3.5 top-3 text-blue-300" size={18} />
+              <input type="text" required value={name} onChange={e => setName(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="Nama Anda" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-1.5">Email</label>
+            <div className="relative">
+              <Mail className="absolute left-3.5 top-3 text-blue-300" size={18} />
+              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="admin@instansi.go.id" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-1.5">Password</label>
+            <div className="relative">
+              <Lock className="absolute left-3.5 top-3 text-blue-300" size={18} />
+              <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="Minimal 6 karakter" minLength={6} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-1.5 flex items-center justify-between">
+              <span>Kode Akses</span>
+              <a href={WA_URL} target="_blank" rel="noreferrer" className="text-xs text-green-400 hover:text-green-300 hover:underline flex items-center gap-1 bg-green-900/30 px-2 py-0.5 rounded-full border border-green-500/30">
+                <MessageCircle size={12} /> Minta Kode ke Admin
+              </a>
+            </label>
+            <div className="relative">
+              <KeyRound className="absolute left-3.5 top-3 text-blue-300" size={18} />
+              <input type="text" required value={accessCode} onChange={e => setAccessCode(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all uppercase" placeholder="Kode Akses" />
+            </div>
+          </div>
+          <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg mt-4 flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
+            {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Sign Up'}
+          </button>
+          <p className="text-center text-sm text-slate-300 mt-6">
+            Sudah punya akun? <button type="button" onClick={() => setView('login')} className="text-cyan-400 font-bold hover:underline ml-1">Login</button>
+          </p>
+        </form>
+      );
+    }
+
+    function ForgotPasswordForm({ setView }) {
+      const [email, setEmail] = useState('');
+      const [message, setMessage] = useState('');
+      const [error, setError] = useState('');
+      const [isSubmitting, setIsSubmitting] = useState(false);
+
+      const handleReset = async (e) => {
+        e.preventDefault();
+        setIsSubmitting(true);
+        setError('');
+        setMessage('');
+        try {
+          await sendPasswordResetEmail(auth, email);
+          setMessage('Tautan reset password telah dikirim ke email Anda.');
+        } catch (err) {
+          setError('Gagal mengirim email reset. Pastikan email terdaftar.');
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
+
+      return (
+        <form onSubmit={handleReset} className="space-y-5">
+          {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm">{error}</div>}
+          {message && <div className="bg-green-500/20 border border-green-500/50 text-green-200 p-3 rounded-xl text-sm backdrop-blur-sm">{message}</div>}
+          <p className="text-sm text-blue-100 mb-6 text-center">
+            Masukkan email yang terdaftar. Kami akan mengirimkan tautan untuk mengatur ulang password Anda.
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-1.5">Email</label>
+            <div className="relative">
+              <Mail className="absolute left-3.5 top-3 text-blue-300" size={18} />
+              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="Email Anda" />
+            </div>
+          </div>
+          <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg mt-2 flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
+            {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Kirim Tautan Reset'}
+          </button>
+          <button type="button" onClick={() => setView('login')} className="w-full bg-slate-800/50 border border-slate-600 text-white py-3 rounded-xl font-medium hover:bg-slate-700/50 transition-all mt-4">
+            Kembali ke Login
+          </button>
+        </form>
+      );
+    }
+
+    // --- Render App ke dalam HTML ---
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
