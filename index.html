@@ -11,13 +11,16 @@
   <!-- Babel untuk kompilasi JSX langsung di browser (SANGAT PENTING AGAR TIDAK KACAU) -->
   <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
 
-  <!-- Import Map untuk Module React dan Lucide Icons (Firebase telah dihapus) -->
+  <!-- Import Map untuk Module React, Lucide Icons, dan Firebase -->
   <script type="importmap">
     {
       "imports": {
         "react": "https://esm.sh/react@18.2.0",
         "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-        "lucide-react": "https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0"
+        "lucide-react": "https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0",
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js"
       }
     }
   </script>
@@ -40,9 +43,35 @@
     import React, { useState, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
     import { Plus, Trash2, FileText, FileType, RefreshCw, Upload, Image as ImageIcon, Globe, Sparkles, Loader2, LogOut, KeyRound, Mail, Lock, User, MessageCircle, FilePenLine, History, Save, X, AlertTriangle } from 'lucide-react';
+    import { initializeApp } from 'firebase/app';
+    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, signOut } from 'firebase/auth';
+    import { getFirestore, doc, setDoc, collection, getDocs, deleteDoc } from 'firebase/firestore';
 
     // --- MASUKKAN URL WEB APP GOOGLE SCRIPT ANDA DI SINI ---
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyExYlVOtlHkZ5beVzFPDQQUm8TApcy_DCGitbSSk3clieuxEBXFzuxOfittcBQjLkwYw/exec"; 
+
+    // ==========================================
+    // --- KONFIGURASI FIREBASE ---
+    // ==========================================
+    const myFirebaseConfig = {
+      apiKey: "AIzaSyDYNVowV6l70H1yrTV0vazIrkvfcbV_41w",
+      authDomain: "pidato-pimpinan-5d1fa.firebaseapp.com",
+      projectId: "pidato-pimpinan-5d1fa",
+      storageBucket: "pidato-pimpinan-5d1fa.firebasestorage.app",
+      messagingSenderId: "976152675088",
+      appId: "1:976152675088:web:1d722e2091188b46f05b95"
+    };
+
+    // PERBAIKAN: Mengubah nama variabel firebaseConfig menjadi activeFirebaseConfig
+    // agar tidak bentrok (redeclaration error) di lingkungan Babel Vercel/Github.
+    const activeFirebaseConfig = (typeof __firebase_config !== 'undefined' && Object.keys(myFirebaseConfig.apiKey).length === 0) 
+      ? JSON.parse(__firebase_config) 
+      : myFirebaseConfig;
+
+    const app = initializeApp(activeFirebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
     // --- Utility: Fetch via Google Apps Script for Gemini API ---
     const fetchGeminiWithBackoff = async (prompt) => {
@@ -84,7 +113,7 @@
       }
     };
 
-    function MainApp({ onLogout, userProfile }) {
+    function MainApp({ onLogout, userProfile, userId }) {
       const [formData, setFormData] = useState({
         logo: null,
         eventName: '',
@@ -220,21 +249,22 @@
         finally { setGeneratingPantun(false); }
       };
 
-      // --- LOCAL STORAGE HISTORY FUNCTIONS ---
-      const getHistoryKey = () => `pidato_history_${userProfile.email}`;
-
-      const fetchHistory = () => {
+      const fetchHistory = async () => {
         try {
-          const localData = localStorage.getItem(getHistoryKey());
-          const data = localData ? JSON.parse(localData) : [];
+          const querySnapshot = await getDocs(collection(db, 'artifacts', appId, 'users', userId, 'speeches'));
+          const data = [];
+          querySnapshot.forEach((doc) => {
+            data.push({ id: doc.id, ...doc.data() });
+          });
           data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
           setHistoryList(data);
-        } catch (e) {
-          showNotification("Gagal membaca riwayat lokal.");
+        } catch (error) {
+          console.error("Error fetching history:", error);
+          showNotification("Gagal memuat riwayat naskah.");
         }
       };
 
-      const handleSaveToHistory = () => {
+      const handleSaveToHistory = async () => {
         if (!formData.eventName) {
           showNotification("Isi nama acara terlebih dahulu untuk menyimpan!");
           return;
@@ -242,38 +272,30 @@
         setIsSaving(true);
         try {
           const speechData = {
-            id: Date.now().toString(),
             formData,
             guests,
             points,
             createdAt: new Date().toISOString()
           };
-          
-          const localData = localStorage.getItem(getHistoryKey());
-          const currentHistory = localData ? JSON.parse(localData) : [];
-          
-          currentHistory.push(speechData);
-          localStorage.setItem(getHistoryKey(), JSON.stringify(currentHistory));
-          
-          showNotification("Berhasil disimpan ke perangkat Anda!");
+          const docRef = doc(collection(db, 'artifacts', appId, 'users', userId, 'speeches'));
+          await setDoc(docRef, speechData);
+          showNotification("Naskah berhasil disimpan ke Riwayat!");
           if (isHistoryOpen) fetchHistory();
         } catch (error) {
-          showNotification("Gagal menyimpan. Memori lokal mungkin penuh.");
+          console.error("Error saving history:", error);
+          showNotification("Gagal menyimpan naskah.");
         } finally {
           setIsSaving(false);
         }
       };
 
-      const handleDeleteHistory = (id) => {
+      const handleDeleteHistory = async (id) => {
         try {
-          const localData = localStorage.getItem(getHistoryKey());
-          let currentHistory = localData ? JSON.parse(localData) : [];
-          currentHistory = currentHistory.filter(item => item.id !== id);
-          localStorage.setItem(getHistoryKey(), JSON.stringify(currentHistory));
-          
-          setHistoryList(currentHistory);
+          await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'speeches', id));
+          setHistoryList(prev => prev.filter(item => item.id !== id));
           showNotification("Riwayat berhasil dihapus.");
         } catch (error) {
+          console.error("Error deleting history:", error);
           showNotification("Gagal menghapus riwayat.");
         }
       };
@@ -283,7 +305,7 @@
         setGuests(item.guests || [{ name: '', title: '' }]);
         setPoints(item.points || ['']);
         setIsHistoryOpen(false);
-        showNotification("Naskah berhasil dimuat dari Riwayat Lokal.");
+        showNotification("Naskah berhasil dimuat dari Riwayat.");
       };
 
       const getGreetings = () => formData.language === 'en' ? "BISMILLAAHIRRAHMAANIRRAHIIM\nASSALAMU’ALAIKUM WR. WB.\nPEACE BE UPON YOU, AND ALLAH'S MERCY AND BLESSINGS." : "BISMILLAAHIRRAHMAANIRRAHIIM\nASSALAAMU’ALAIKUM WR. WB.\nSALAM SEJAHTERA UNTUK KITA SEMUA,\nSAMPURASUN.";
@@ -430,7 +452,7 @@
               <div className="flex items-center gap-3">
                 {/* Tombol Riwayat */}
                 <button onClick={() => setIsHistoryOpen(true)} className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white px-5 py-2.5 rounded-xl border border-white/20 transition-colors shadow-lg text-sm font-semibold">
-                  <History size={18} /> Riwayat Lokal
+                  <History size={18} /> Riwayat
                 </button>
                 
                 <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-2 rounded-xl shadow-lg ml-2">
@@ -613,7 +635,7 @@
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col relative z-10 overflow-hidden transform transition-all">
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/80 backdrop-blur-md">
                   <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                    <History className="text-blue-600" /> Riwayat Naskah Lokal Anda
+                    <History className="text-blue-600" /> Riwayat Naskah Anda
                   </h2>
                   <button onClick={() => setIsHistoryOpen(false)} className="text-slate-400 hover:text-slate-700 p-2 rounded-full hover:bg-slate-200 transition-colors">
                     <X size={24} />
@@ -681,34 +703,31 @@
     // ==========================================
 
     function App() {
+      const [user, setUser] = useState(null);
       const [userProfile, setUserProfile] = useState(null);
       const [loading, setLoading] = useState(true);
-      const [authView, setAuthView] = useState('login'); // 'login' atau 'register'
+      const [view, setView] = useState('login'); // 'login', 'register', 'forgot'
 
       useEffect(() => {
-        // Cek apakah sebelumnya pengguna sudah pernah masuk secara lokal
-        const storedSession = localStorage.getItem('pidatoSession');
-        if (storedSession) {
-          setUserProfile(JSON.parse(storedSession));
-        }
-        setLoading(false);
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+          setUser(currentUser);
+          if (currentUser) {
+            setUserProfile({ email: currentUser.email, name: currentUser.displayName || 'Pengguna' });
+          }
+          setLoading(false);
+        });
+        return () => unsubscribe();
       }, []);
 
-      const handleAccessGranted = (sessionData) => {
-        localStorage.setItem('pidatoSession', JSON.stringify(sessionData));
-        setUserProfile(sessionData);
-      };
-
-      const handleLogout = () => {
-        localStorage.removeItem('pidatoSession');
-        setUserProfile(null);
-        setAuthView('login'); // Kembali ke halaman login setelah logout
+      const handleLogout = async () => {
+        await signOut(auth);
       };
 
       if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-900"><Loader2 className="animate-spin text-cyan-400" size={40} /></div>;
 
-      if (userProfile) {
-        return <MainApp onLogout={handleLogout} userProfile={userProfile} />;
+      if (user) {
+        // PASS user.uid AS userId to MainApp
+        return <MainApp onLogout={handleLogout} userProfile={userProfile} userId={user.uid} />;
       }
 
       return (
@@ -730,82 +749,76 @@
               <p className="text-blue-200/80 text-sm mt-2 font-medium">Aplikasi Pembuat Naskah Sambutan Otomatis</p>
             </div>
             
-            {authView === 'login' ? (
-              <LoginForm onAccessGranted={handleAccessGranted} setView={setAuthView} />
-            ) : (
-              <RegisterForm onAccessGranted={handleAccessGranted} setView={setAuthView} />
+            {view === 'login' && (
+               <LoginForm setView={setView} />
             )}
-
+            {view === 'register' && (
+               <>
+                 <h2 className="text-xl font-semibold mb-6 text-center tracking-wide">Registrasi</h2>
+                 <RegisterForm setView={setView} />
+               </>
+            )}
+            {view === 'forgot' && (
+               <>
+                 <h2 className="text-xl font-semibold mb-6 text-center tracking-wide">Lupa Password</h2>
+                 <ForgotPasswordForm setView={setView} />
+               </>
+            )}
           </div>
         </div>
       );
     }
 
-    function LoginForm({ onAccessGranted, setView }) {
+    function LoginForm({ setView }) {
       const [email, setEmail] = useState('');
       const [password, setPassword] = useState('');
       const [error, setError] = useState('');
+      const [isSubmitting, setIsSubmitting] = useState(false);
 
-      const handleLogin = (e) => {
+      const handleLogin = async (e) => {
         e.preventDefault();
+        setIsSubmitting(true);
         setError('');
-
-        // Cek pengguna dari Local Storage
-        const localUsersStr = localStorage.getItem('pidatoLocalUsers');
-        const localUsers = localUsersStr ? JSON.parse(localUsersStr) : [];
-        
-        const user = localUsers.find(u => u.email === email && u.password === password);
-
-        if (user) {
-          // Login sukses
-          onAccessGranted({ name: user.name, email: user.email, id: user.id });
-        } else {
-          setError('Email atau password salah, atau akun belum terdaftar.');
+        try {
+          await signInWithEmailAndPassword(auth, email, password);
+        } catch (err) {
+          setError('Login gagal. Periksa email dan password Anda.');
+        } finally {
+          setIsSubmitting(false);
         }
       };
 
-      const WA_FORGOT_PWD_URL = "https://wa.me/6287838960454?text=Halo%20Admin,%20saya%20lupa%20kata%20sandi%20akun%20PidatoPimpinan.AI%20saya.";
-
       return (
-        <form onSubmit={handleLogin} className="space-y-4">
-          {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm text-center">{error}</div>}
-          
+        <form onSubmit={handleLogin} className="space-y-5">
+          {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm">{error}</div>}
           <div>
             <label className="block text-sm font-medium text-blue-100 mb-1.5">Email</label>
             <div className="relative">
               <Mail className="absolute left-3.5 top-3 text-blue-300" size={18} />
-              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 outline-none text-white placeholder-slate-400" placeholder="email@instansi.go.id" />
+              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="admin@instansi.go.id" />
             </div>
           </div>
-          
           <div>
             <label className="block text-sm font-medium text-blue-100 mb-1.5">Password</label>
             <div className="relative">
               <Lock className="absolute left-3.5 top-3 text-blue-300" size={18} />
-              <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 outline-none text-white placeholder-slate-400" placeholder="••••••••" />
-            </div>
-            <div className="flex justify-end mt-2">
-              <a href={WA_FORGOT_PWD_URL} target="_blank" rel="noreferrer" className="text-xs text-cyan-400 hover:text-cyan-300 hover:underline transition-colors">
-                Lupa kata sandi?
-              </a>
+              <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="••••••••" />
             </div>
           </div>
-
-          <button type="submit" className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 transition-all shadow-lg mt-6 flex items-center justify-center gap-2">
-            Login
+          <div className="flex justify-end">
+            <button type="button" onClick={() => setView('forgot')} className="text-sm text-cyan-400 hover:text-cyan-300 hover:underline transition-colors">Lupa password?</button>
+          </div>
+          <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
+            {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Login'}
           </button>
-          
           <p className="text-center text-sm text-slate-300 mt-6">
-            Belum punya akun? 
-            <button type="button" onClick={() => setView('register')} className="text-cyan-400 font-bold hover:underline ml-1">
-              Registrasi
-            </button>
+            Belum punya akun? <button type="button" onClick={() => setView('register')} className="text-cyan-400 font-bold hover:underline ml-1">Registrasi</button>
           </p>
         </form>
       );
     }
 
-    function RegisterForm({ onAccessGranted, setView }) {
+    function RegisterForm({ setView }) {
       const [name, setName] = useState('');
       const [email, setEmail] = useState('');
       const [password, setPassword] = useState('');
@@ -821,18 +834,11 @@
         setIsSubmitting(true);
         
         try {
-          if (!GAS_WEB_APP_URL) throw new Error("URL Google Apps Script belum diatur.");
-
-          // 1. Cek apakah email sudah terdaftar di Local Storage
-          const localUsersStr = localStorage.getItem('pidatoLocalUsers');
-          const localUsers = localUsersStr ? JSON.parse(localUsersStr) : [];
-          if (localUsers.find(u => u.email === email)) {
-            setError('Email ini sudah didaftarkan di perangkat ini.');
-            setIsSubmitting(false);
-            return;
+          // 1. Validasi kode akses ke Google Apps Script terlebih dahulu
+          if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL === "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
+             throw new Error("URL Google Apps Script belum diatur.");
           }
 
-          // 2. Validasi kode akses ke Google Apps Script
           const response = await fetch(GAS_WEB_APP_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -846,35 +852,40 @@
             return;
           }
 
-          // 3. Simpan akun ke Local Storage
-          const newUser = { id: Date.now().toString(), name, email, password };
-          localUsers.push(newUser);
-          localStorage.setItem('pidatoLocalUsers', JSON.stringify(localUsers));
+          // 2. Jika valid, buat akun di Firebase
+          const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+          
+          // 3. Simpan profil ke Firebase Firestore
+          await setDoc(doc(db, 'artifacts', appId, 'users', userCredential.user.uid, 'profile'), {
+            name, email, role: 'user', createdAt: new Date().toISOString()
+          });
 
-          // 4. Rekap data ke Google Sheets melalui Backend
-          try {
-             const syncRes = await fetch(GAS_WEB_APP_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ 
-                    action: 'register', 
-                    name: newUser.name,                     
-                    email: newUser.email,                   
-                    nomorId: newUser.id,
-                    password: newUser.password
-                })
-             });
-             const syncData = await syncRes.json();
-             if(!syncData.success) console.error("Gagal merekap ke Google Sheet:", syncData.error);
-          } catch(err) {
-             console.error("Gagal sinkronisasi jaringan:", err);
+          // 4. Rekap data ke Google Sheets melalui API Apps Script (DENGAN CONSOLE LOG)
+          if(GAS_WEB_APP_URL && GAS_WEB_APP_URL !== "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
+             try {
+               const syncRes = await fetch(GAS_WEB_APP_URL, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                  body: JSON.stringify({ 
+                      action: 'register', 
+                      name: name,                     
+                      email: email,                   
+                      nomorId: userCredential.user.uid 
+                  })
+               });
+               const syncData = await syncRes.json();
+               if(syncData.success) {
+                 console.log("✅ Berhasil merekap data pengguna baru ke Google Sheet.");
+               } else {
+                 console.error("❌ Gagal merekap ke Google Sheet:", syncData.error);
+               }
+             } catch(err) {
+               console.error("❌ Kesalahan jaringan saat menghubungi Google Script:", err);
+             }
           }
 
-          // 5. Langsung masuk ke aplikasi setelah registrasi sukses
-          onAccessGranted({ name: newUser.name, email: newUser.email, id: newUser.id });
-
         } catch (err) {
-          setError(err.message || 'Gagal terhubung ke server. Coba lagi.');
+          setError(err.message.includes('email-already') ? 'Email sudah terdaftar.' : (err.message || 'Pendaftaran gagal. Coba lagi.'));
         } finally {
           setIsSubmitting(false);
         }
@@ -882,62 +893,118 @@
 
       return (
         <form onSubmit={handleRegister} className="space-y-4">
-          {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm text-center">{error}</div>}
-          
+          {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm">{error}</div>}
           <div>
             <label className="block text-sm font-medium text-blue-100 mb-1.5">Nama Lengkap</label>
             <div className="relative">
               <User className="absolute left-3.5 top-3 text-blue-300" size={18} />
-              <input type="text" required value={name} onChange={e => setName(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 outline-none text-white placeholder-slate-400" placeholder="Nama Anda" />
+              <input type="text" required value={name} onChange={e => setName(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="Nama Anda" />
             </div>
           </div>
-          
           <div>
             <label className="block text-sm font-medium text-blue-100 mb-1.5">Email</label>
             <div className="relative">
               <Mail className="absolute left-3.5 top-3 text-blue-300" size={18} />
-              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 outline-none text-white placeholder-slate-400" placeholder="email@instansi.go.id" />
+              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="admin@instansi.go.id" />
             </div>
           </div>
-
           <div>
             <label className="block text-sm font-medium text-blue-100 mb-1.5">Password</label>
             <div className="relative">
               <Lock className="absolute left-3.5 top-3 text-blue-300" size={18} />
-              <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 outline-none text-white placeholder-slate-400" placeholder="Buat password" minLength={6}/>
+              <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="Minimal 6 karakter" minLength={6} />
             </div>
           </div>
-          
           <div>
             <label className="block text-sm font-medium text-blue-100 mb-1.5 flex items-center justify-between">
-              <span>Kode Akses VIP</span>
+              <span>Kode Akses</span>
               <a href={WA_URL} target="_blank" rel="noreferrer" className="text-xs text-green-400 hover:text-green-300 hover:underline flex items-center gap-1 bg-green-900/30 px-2 py-0.5 rounded-full border border-green-500/30">
-                <MessageCircle size={12} /> Minta Kode
+                <MessageCircle size={12} /> Minta Kode ke Admin
               </a>
             </label>
             <div className="relative">
               <KeyRound className="absolute left-3.5 top-3 text-blue-300" size={18} />
-              <input type="text" required value={accessCode} onChange={e => setAccessCode(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 outline-none text-white placeholder-slate-400 uppercase" placeholder="Masukkan Kode" />
+              <input type="text" required value={accessCode} onChange={e => setAccessCode(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all uppercase" placeholder="Kode Akses" />
             </div>
           </div>
-
-          <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 transition-all shadow-lg mt-6 flex items-center justify-center gap-2">
-            {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Registrasi'}
+          <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg mt-4 flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
+            {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Sign Up'}
           </button>
-
           <p className="text-center text-sm text-slate-300 mt-6">
-            Sudah punya akun? 
-            <button type="button" onClick={() => setView('login')} className="text-cyan-400 font-bold hover:underline ml-1">
-              Login
-            </button>
+            Sudah punya akun? <button type="button" onClick={() => setView('login')} className="text-cyan-400 font-bold hover:underline ml-1">Login</button>
           </p>
         </form>
       );
     }
 
-    // Melakukan render aplikasi React ke dalam elemen dengan ID "root"
+    function ForgotPasswordForm({ setView }) {
+      const [email, setEmail] = useState('');
+      const [message, setMessage] = useState('');
+      const [error, setError] = useState('');
+      const [isSubmitting, setIsSubmitting] = useState(false);
+
+      const handleReset = async (e) => {
+        e.preventDefault();
+        setIsSubmitting(true);
+        setError('');
+        setMessage('');
+        try {
+          await sendPasswordResetEmail(auth, email);
+          setMessage('Tautan reset password telah dikirim ke email Anda.');
+        } catch (err) {
+          setError('Gagal mengirim email reset. Pastikan email terdaftar.');
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
+
+      return (
+        <form onSubmit={handleReset} className="space-y-5">
+          {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm">{error}</div>}
+          {message && <div className="bg-green-500/20 border border-green-500/50 text-green-200 p-3 rounded-xl text-sm backdrop-blur-sm">{message}</div>}
+          <p className="text-sm text-blue-100 mb-6 text-center">
+            Masukkan email yang terdaftar. Kami akan mengirimkan tautan untuk mengatur ulang password Anda.
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-1.5">Email</label>
+            <div className="relative">
+              <Mail className="absolute left-3.5 top-3 text-blue-300" size={18} />
+              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="Email Anda" />
+            </div>
+          </div>
+          <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg mt-2 flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
+            {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Kirim Tautan Reset'}
+          </button>
+          <button type="button" onClick={() => setView('login')} className="w-full bg-slate-800/50 border border-slate-600 text-white py-3 rounded-xl font-medium hover:bg-slate-700/50 transition-all mt-4">
+            Kembali ke Login
+          </button>
+        </form>
+      );
+    }
+
     const root = createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
 </body>
 </html>
+```
+
+Untuk menerapkan **Rules Firebase**, silakan buka konsol Firebase Anda (bagian **Firestore Database** -> tab **Rules**), lalu ganti isinya menjadi seperti di bawah ini agar aman dari *hacker*:
+
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Aturan untuk data naskah pidato pengguna
+    match /artifacts/{appId}/users/{userId}/{document=**} {
+      // Hanya izinkan pengguna membaca dan menulis data milik mereka sendiri
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Tolak semua akses lain secara default (Aman dari peretas)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
