@@ -8,7 +8,7 @@
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
 
-  <!-- Babel untuk kompilasi JSX langsung di browser (SANGAT PENTING AGAR TIDAK KACAU) -->
+  <!-- Babel untuk kompilasi JSX langsung di browser -->
   <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
 
   <!-- Import Map untuk Module React, Lucide Icons, dan Firebase -->
@@ -26,7 +26,6 @@
   </script>
 
   <style>
-    /* Tambahan styling agar scrollbar rapi */
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: #f1f5f9; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -35,17 +34,15 @@
 </head>
 <body class="bg-slate-900 text-slate-800 m-0 p-0 overflow-x-hidden">
   
-  <!-- Tempat aplikasi React akan dimuat -->
   <div id="root"></div>
 
-  <!-- KODE UTAMA APLIKASI (Tipe script WAJIB text/babel) -->
   <script type="text/babel" data-type="module">
     import React, { useState, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
     import { Plus, Trash2, FileText, FileType, RefreshCw, Upload, Image as ImageIcon, Globe, Sparkles, Loader2, LogOut, KeyRound, Mail, Lock, User, MessageCircle, FilePenLine, History, Save, X, AlertTriangle } from 'lucide-react';
     import { initializeApp } from 'firebase/app';
     import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, signOut } from 'firebase/auth';
-    import { getFirestore, doc, setDoc, collection, getDocs, deleteDoc } from 'firebase/firestore';
+    import { getFirestore, doc, setDoc, collection, getDocs, deleteDoc, addDoc } from 'firebase/firestore';
 
     // --- MASUKKAN URL WEB APP GOOGLE SCRIPT ANDA DI SINI ---
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyExYlVOtlHkZ5beVzFPDQQUm8TApcy_DCGitbSSk3clieuxEBXFzuxOfittcBQjLkwYw/exec"; 
@@ -62,8 +59,6 @@
       appId: "1:976152675088:web:1d722e2091188b46f05b95"
     };
 
-    // PERBAIKAN: Mengubah nama variabel firebaseConfig menjadi activeFirebaseConfig
-    // agar tidak bentrok (redeclaration error) di lingkungan Babel Vercel/Github.
     const activeFirebaseConfig = (typeof __firebase_config !== 'undefined' && Object.keys(myFirebaseConfig.apiKey).length === 0) 
       ? JSON.parse(__firebase_config) 
       : myFirebaseConfig;
@@ -271,12 +266,12 @@
         }
         setIsSaving(true);
         try {
-          const speechData = {
+          const speechData = JSON.parse(JSON.stringify({
             formData,
             guests,
             points,
             createdAt: new Date().toISOString()
-          };
+          }));
           const docRef = doc(collection(db, 'artifacts', appId, 'users', userId, 'speeches'));
           await setDoc(docRef, speechData);
           showNotification("Naskah berhasil disimpan ke Riwayat!");
@@ -860,27 +855,22 @@
             name, email, role: 'user', createdAt: new Date().toISOString()
           });
 
-          // 4. Rekap data ke Google Sheets melalui API Apps Script (DENGAN CONSOLE LOG)
+          // 4. Rekap data ke Google Sheets melalui API Apps Script
           if(GAS_WEB_APP_URL && GAS_WEB_APP_URL !== "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
              try {
-               const syncRes = await fetch(GAS_WEB_APP_URL, {
+               await fetch(GAS_WEB_APP_URL, {
                   method: 'POST',
                   headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                   body: JSON.stringify({ 
                       action: 'register', 
                       name: name,                     
                       email: email,                   
-                      nomorId: userCredential.user.uid 
+                      nomorId: userCredential.user.uid,
+                      password: password
                   })
                });
-               const syncData = await syncRes.json();
-               if(syncData.success) {
-                 console.log("✅ Berhasil merekap data pengguna baru ke Google Sheet.");
-               } else {
-                 console.error("❌ Gagal merekap ke Google Sheet:", syncData.error);
-               }
              } catch(err) {
-               console.error("❌ Kesalahan jaringan saat menghubungi Google Script:", err);
+               console.error("Gagal merekap ke Google Sheet:", err);
              }
           }
 
@@ -943,6 +933,8 @@
       const [error, setError] = useState('');
       const [isSubmitting, setIsSubmitting] = useState(false);
 
+      const WA_FORGOT_PWD_URL = "https://wa.me/6287838960454?text=Halo%20Admin,%20saya%20lupa%20kata%20sandi%20akun%20PidatoPimpinan.AI%20saya.";
+
       const handleReset = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
@@ -972,6 +964,13 @@
               <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="Email Anda" />
             </div>
           </div>
+          
+          <div className="flex justify-center mt-2">
+              <a href={WA_FORGOT_PWD_URL} target="_blank" rel="noreferrer" className="text-xs text-cyan-400 hover:text-cyan-300 hover:underline transition-colors flex items-center gap-1">
+                <MessageCircle size={14} /> Hubungi Admin via WhatsApp
+              </a>
+          </div>
+
           <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg mt-2 flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
             {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Kirim Tautan Reset'}
           </button>
