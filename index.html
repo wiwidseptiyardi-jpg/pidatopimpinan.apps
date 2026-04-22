@@ -169,7 +169,7 @@
       }, [isHistoryOpen, isGuest]);
 
       // =========================================================
-      // SISTEM LIMITASI TAMU (5 TOKEN VIA FIREBASE)
+      // SISTEM LIMITASI TAMU (PELACAKAN PERANGKAT & EMAIL)
       // =========================================================
       const checkAndConsumeGuestToken = async () => {
         if (!isGuest) return true;
@@ -179,25 +179,42 @@
             await signInAnonymously(auth);
           }
 
+          // Dapatkan Device ID (Agar tidak bisa diakali dengan email palsu baru)
+          let deviceId = localStorage.getItem('pidato_device_id');
+          if (!deviceId) {
+            deviceId = 'dev_' + Math.random().toString(36).substring(2, 15);
+            localStorage.setItem('pidato_device_id', deviceId);
+          }
+
           const email = userProfile.email;
           const safeEmail = email.toLowerCase().replace(/[^a-z0-9]/g, '_');
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'guestUsage', safeEmail);
           
-          const docSnap = await getDoc(docRef);
-          let currentUsage = 0;
-          if (docSnap.exists()) {
-            currentUsage = docSnap.data().usage || 0;
-          }
+          // Cek kuota berdasarkan Perangkat
+          const docRefDevice = doc(db, 'artifacts', appId, 'public', 'data', 'guestUsage', deviceId);
+          const docSnapDevice = await getDoc(docRefDevice);
+          let currentUsageDevice = docSnapDevice.exists() ? docSnapDevice.data().usage || 0 : 0;
+
+          // Cek kuota berdasarkan Email
+          const docRefEmail = doc(db, 'artifacts', appId, 'public', 'data', 'guestUsage', safeEmail);
+          const docSnapEmail = await getDoc(docRefEmail);
+          let currentUsageEmail = docSnapEmail.exists() ? docSnapEmail.data().usage || 0 : 0;
           
-          if (currentUsage >= 5) {
+          // Jika salah satu (perangkat atau email) sudah mencapai limit 5, maka blokir
+          if (currentUsageDevice >= 5 || currentUsageEmail >= 5) {
             setShowPaymentModal(true);
             return false;
           }
           
-          const newUsage = currentUsage + 1;
-          await setDoc(docRef, { usage: newUsage, email: email, lastUsed: new Date().toISOString() }, { merge: true });
+          // Increment pemakaian
+          const newUsageDevice = currentUsageDevice + 1;
+          const newUsageEmail = currentUsageEmail + 1;
+          const maxUsage = Math.max(newUsageDevice, newUsageEmail);
+
+          // Update record di Firebase
+          await setDoc(docRefDevice, { usage: newUsageDevice, email: email, lastUsed: new Date().toISOString() }, { merge: true });
+          await setDoc(docRefEmail, { usage: newUsageEmail, email: email, lastUsed: new Date().toISOString() }, { merge: true });
           
-          showNotification(`Sisa Token Tamu: ${5 - newUsage} dari 5`);
+          showNotification(`Sisa Token Tamu: ${5 - maxUsage} dari 5`);
           return true;
         } catch (err) {
           console.error("Gagal memvalidasi token tamu:", err);
@@ -380,7 +397,6 @@
       const getGuestPrefix = (index) => formData.language === 'en' ? (index === 0 ? "THE HONORABLE, " : "DISTINGUISHED, ") : (index === 0 ? "YTH. " : "YSH. ");
       const getParticipantPrefix = () => formData.language === 'en' ? "AND BELOVED AUDIENCE." : "YSB. PARA PESERTA,\nHADIRIN UNDANGAN YANG SAYA HORMATI.";
       
-      // PERBAIKAN: Menghilangkan "HADIRIN YANG SAYA BANGGAKAN"
       const getInterjections = () => formData.language === 'en' ? ["DISTINGUISHED GUESTS,", "HAPPY ATTENDEES,"] : ["HADIRIN YANG SAYA HORMATI,", "HADIRIN YANG BERBAHAGIA,"];
       const getFinalThanks = () => formData.language === 'en' ? "THANK YOU." : "TERIMA KASIH.\nBILLAAHITTAUFIQ WALHIDAYAH,\nWASSALAAMU’ALAIKUM WR. WB.";
 
@@ -711,7 +727,7 @@
                   
                   <div className="p-6 text-center space-y-4">
                     <p className="text-slate-600 font-medium">
-                      Batas 5 kali uji coba gratis untuk email Anda telah habis. Dapatkan akses tanpa batas dan fitur Simpan Riwayat Cloud sekarang.
+                      Batas 5 kali uji coba gratis untuk perangkat atau email Anda telah habis. Dapatkan akses tanpa batas dan fitur Simpan Riwayat Cloud sekarang.
                     </p>
                     
                     <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100">
@@ -989,23 +1005,40 @@
           return;
         }
 
+        // Validasi format email agar tidak bisa asal-asalan (seperti a@a.a)
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const emailPrefix = email.split('@')[0];
+        if (!emailRegex.test(email) || emailPrefix.length < 3) {
+          setError('Silakan masukkan alamat email yang valid dan tidak asal-asalan.');
+          return;
+        }
+
         setIsChecking(true);
         try {
-          // 1. Wajib melakukan otentikasi "Anonim" terlebih dahulu untuk dapat izin membaca Database (Rules)
           await signInAnonymously(auth);
 
-          // 2. Mengecek histori penggunaan dari email ini di Database Firebase
-          const safeEmail = email.toLowerCase().replace(/[^a-z0-9]/g, '_');
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'guestUsage', safeEmail);
-          const docSnap = await getDoc(docRef);
-          
-          let currentUsage = 0;
-          if (docSnap.exists()) {
-            currentUsage = docSnap.data().usage || 0;
+          // Sistem Pelacakan ID Perangkat Lokal
+          let deviceId = localStorage.getItem('pidato_device_id');
+          if (!deviceId) {
+            deviceId = 'dev_' + Math.random().toString(36).substring(2, 15);
+            localStorage.setItem('pidato_device_id', deviceId);
           }
 
-          if (currentUsage >= 5) {
-            setError('Email ini telah mencapai batas 5 kali percobaan AI. Silakan daftar akun Premium.');
+          const safeEmail = email.toLowerCase().replace(/[^a-z0-9]/g, '_');
+          
+          // Mengecek kuota berdasarkan ID Perangkat
+          const docRefDevice = doc(db, 'artifacts', appId, 'public', 'data', 'guestUsage', deviceId);
+          const docSnapDevice = await getDoc(docRefDevice);
+          let currentUsageDevice = docSnapDevice.exists() ? docSnapDevice.data().usage || 0 : 0;
+
+          // Mengecek kuota berdasarkan Email yang diinput
+          const docRefEmail = doc(db, 'artifacts', appId, 'public', 'data', 'guestUsage', safeEmail);
+          const docSnapEmail = await getDoc(docRefEmail);
+          let currentUsageEmail = docSnapEmail.exists() ? docSnapEmail.data().usage || 0 : 0;
+
+          // Jika perangkat INI atau email INI sudah pernah 5 kali mencoba
+          if (currentUsageDevice >= 5 || currentUsageEmail >= 5) {
+            setError('Batas 5 kali percobaan untuk perangkat atau email ini telah habis. Silakan daftar Premium.');
             await signOut(auth); // Keluar dari sesi anonim
             return;
           }
