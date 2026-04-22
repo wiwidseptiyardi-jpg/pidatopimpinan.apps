@@ -987,24 +987,3 @@
   </script>
 </body>
 </html>
-```
-
-Untuk menerapkan **Rules Firebase**, silakan buka konsol Firebase Anda (bagian **Firestore Database** -> tab **Rules**), lalu ganti isinya menjadi seperti di bawah ini agar aman dari *hacker*:
-
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    
-    // Aturan untuk data naskah pidato pengguna
-    match /artifacts/{appId}/users/{userId}/{document=**} {
-      // Hanya izinkan pengguna membaca dan menulis data milik mereka sendiri
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-    
-    // Tolak semua akses lain secara default (Aman dari peretas)
-    match /{document=**} {
-      allow read, write: if false;
-    }
-  }
-}
