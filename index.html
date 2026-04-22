@@ -306,7 +306,7 @@
       const getGreetings = () => formData.language === 'en' ? "BISMILLAAHIRRAHMAANIRRAHIIM\nASSALAMU’ALAIKUM WR. WB.\nPEACE BE UPON YOU, AND ALLAH'S MERCY AND BLESSINGS." : "BISMILLAAHIRRAHMAANIRRAHIIM\nASSALAAMU’ALAIKUM WR. WB.\nSALAM SEJAHTERA UNTUK KITA SEMUA,\nSAMPURASUN.";
       const getGuestPrefix = (index) => formData.language === 'en' ? (index === 0 ? "THE HONORABLE, " : "DISTINGUISHED, ") : (index === 0 ? "YTH. " : "YSH. ");
       const getParticipantPrefix = () => formData.language === 'en' ? "AND BELOVED AUDIENCE." : "YSB. PARA PESERTA,\nHADIRIN UNDANGAN YANG SAYA HORMATI.";
-      const getInterjections = () => formData.language === 'en' ? ["DISTINGUISHED GUESTS,", "HAPPY ATTENDEES,", "BELOVED AUDIENCE,"] : ["HADIRIN YANG SAYA HORMATI,", "HADIRIN YANG BERBAHAGIA,", "HADIRIN YANG SAYA BANGGAKAN,"];
+      const getInterjections = () => formData.language === 'en' ? ["DISTINGUISHED GUESTS,", "HAPPY ATTENDEES,"] : ["HADIRIN YANG SAYA HORMATI,", "HADIRIN YANG BERBAHAGIA,"];
       const getFinalThanks = () => formData.language === 'en' ? "THANK YOU." : "TERIMA KASIH.\nBILLAAHITTAUFIQ WALHIDAYAH,\nWASSALAAMU’ALAIKUM WR. WB.";
 
       const generateSpeechHTML = () => {
@@ -347,7 +347,7 @@
               <p style="${indentStyle}">${formData.openingSpeech || '[Pembukaan belum dibuat]'}</p><br/>
               <p style="${indentStyle} margin-bottom: 10px;">${interjections[0]}</p>
               ${points.map(p => `<p style="${indentStyle}">${(p || '').toUpperCase()}</p>`).join('')}<br/>
-              <p style="${indentStyle} margin-bottom: 10px;">${interjections[1]}</p><p style="${indentStyle} margin-bottom: 10px;">${interjections[2]}</p>
+              <p style="${indentStyle} margin-bottom: 10px;">${interjections[1]}</p>
               <p style="${indentStyle}">${formData.closingSpeech || '[Penutup belum dibuat]'}</p>
               ${formData.closingPantun ? `<div style="text-align: center; font-style: italic; margin: 20px 0;">${formData.closingPantun.toUpperCase().replace(/\n/g, '<br/>')}</div>` : ''}<br/>
               <div style="text-align: center; margin-top: 30px;"><p style="white-space: pre-line;">${getFinalThanks()}</p><br/><br/><br/><p style="font-weight: bold;">${sTitle}</p><p style="font-weight: bold;">${sName}</p></div>
@@ -406,9 +406,8 @@
           <div className="mb-6 text-justify"><p className="indent-16 whitespace-pre-line">{formData.openingSpeech || <span className="text-slate-400 italic normal-case">[Pembukaan belum dibuat. Isi form di kiri atau gunakan AI]</span>}</p></div>
           <div className="mb-4 text-left indent-16"><p>{interjections[0]}</p></div>
           <div className="mb-6 text-justify">{points.some(p => p !== '') ? points.map((point, i) => point && <p key={i} className="mb-4 indent-16">{point}</p>) : <p className="text-slate-300 italic p-6 border-2 border-dashed border-slate-200 rounded-lg text-center normal-case">Tuliskan poin utama sambutan di sini.</p>}</div>
-          <div className="mb-4 text-left indent-16"><p>{interjections[1]}</p></div>
           <div className="mb-12 text-justify">
-            <p className="mb-4 text-left indent-16">{interjections[2]}</p>
+            <p className="mb-4 text-left indent-16">{interjections[1]}</p>
             <p className="indent-16 whitespace-pre-line">{formData.closingSpeech || <span className="text-slate-400 italic normal-case">[Penutup belum dibuat. Isi form di kiri atau gunakan AI]</span>}</p>
             {formData.closingPantun && <div className="my-8 text-center italic font-semibold text-slate-800 whitespace-pre-line border-y-2 border-slate-100 py-6 bg-slate-50 rounded-lg">{formData.closingPantun}</div>}
           </div>
