@@ -39,12 +39,22 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useRef, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Plus, Trash2, FileText, FileType, RefreshCw, Upload, Image as ImageIcon, Globe, Sparkles, Loader2, LogOut, KeyRound, Mail, Lock, User, MessageCircle, FilePenLine, History, Save, X, AlertTriangle } from 'lucide-react';
+    import { 
+      Plus, Trash2, FileType, Upload, Image as ImageIcon, 
+      Globe, Sparkles, Loader2, LogOut, KeyRound, 
+      Mail, Lock, User, MessageCircle, FilePenLine, 
+      History, Save, X, QrCode, Crown 
+    } from 'lucide-react';
     import { initializeApp } from 'firebase/app';
-    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, signOut } from 'firebase/auth';
-    import { getFirestore, doc, setDoc, collection, getDocs, deleteDoc, addDoc } from 'firebase/firestore';
+    import { 
+      getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
+      sendPasswordResetEmail, onAuthStateChanged, signOut, signInAnonymously 
+    } from 'firebase/auth';
+    import { 
+      getFirestore, doc, setDoc, collection, getDocs, deleteDoc, addDoc, getDoc 
+    } from 'firebase/firestore';
 
-    // --- MASUKKAN URL WEB APP GOOGLE SCRIPT ANDA DI SINI ---
+    // --- URL WEB APP GOOGLE SCRIPT ANDA ---
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyExYlVOtlHkZ5beVzFPDQQUm8TApcy_DCGitbSSk3clieuxEBXFzuxOfittcBQjLkwYw/exec"; 
 
     // ==========================================
@@ -68,7 +78,9 @@
     const db = getFirestore(app);
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-    // --- Utility: Fetch via Google Apps Script for Gemini API ---
+    // ============================================================
+    // SISTEM PENGAMBILAN AI VIA BACKEND GOOGLE SCRIPT
+    // ============================================================
     const fetchGeminiWithBackoff = async (prompt) => {
       const options = {
         method: 'POST',
@@ -95,7 +107,7 @@
           
           const text = resData.data?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (!text) {
-            throw new Error("Respons AI kosong. Kemungkinan diblokir oleh filter keamanan.");
+            throw new Error("Respons AI kosong.");
           }
           
           return text;
@@ -108,7 +120,7 @@
       }
     };
 
-    function MainApp({ onLogout, userProfile, userId }) {
+    function MainApp({ onLogout, userProfile, userId, isGuest }) {
       const [formData, setFormData] = useState({
         logo: null,
         eventName: '',
@@ -138,6 +150,7 @@
       
       const [historyList, setHistoryList] = useState([]);
       const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+      const [showPaymentModal, setShowPaymentModal] = useState(false);
 
       const previewRef = useRef(null);
       const [notification, setNotification] = useState('');
@@ -150,10 +163,48 @@
       }, [formData.eventName, formData.eventTheme]);
 
       useEffect(() => {
-        if (isHistoryOpen) {
+        if (isHistoryOpen && !isGuest) {
           fetchHistory();
         }
-      }, [isHistoryOpen]);
+      }, [isHistoryOpen, isGuest]);
+
+      // =========================================================
+      // SISTEM LIMITASI TAMU (5 TOKEN VIA FIREBASE)
+      // =========================================================
+      const checkAndConsumeGuestToken = async () => {
+        if (!isGuest) return true;
+
+        try {
+          if (!auth.currentUser) {
+            await signInAnonymously(auth);
+          }
+
+          const email = userProfile.email;
+          const safeEmail = email.toLowerCase().replace(/[^a-z0-9]/g, '_');
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'guestUsage', safeEmail);
+          
+          const docSnap = await getDoc(docRef);
+          let currentUsage = 0;
+          if (docSnap.exists()) {
+            currentUsage = docSnap.data().usage || 0;
+          }
+          
+          if (currentUsage >= 5) {
+            setShowPaymentModal(true);
+            return false;
+          }
+          
+          const newUsage = currentUsage + 1;
+          await setDoc(docRef, { usage: newUsage, email: email, lastUsed: new Date().toISOString() }, { merge: true });
+          
+          showNotification(`Sisa Token Tamu: ${5 - newUsage} dari 5`);
+          return true;
+        } catch (err) {
+          console.error("Gagal memvalidasi token tamu:", err);
+          showNotification("Gagal memvalidasi token. Pastikan Rules Firebase sudah diperbarui.");
+          return false;
+        }
+      };
 
       const handleInputChange = (e) => {
         const { name, value } = e.target;
@@ -200,51 +251,69 @@
 
       const handleAIOpening = async () => {
         if (!formData.eventName) return showNotification("Isi nama acara terlebih dahulu.");
+        
+        const canProceed = await checkAndConsumeGuestToken();
+        if (!canProceed) return;
+
         setGeneratingOpening(true);
         try {
             const prompt = `Buatkan paragraf PEMBUKAAN pidato resmi yang menarik dan relevan. Konteks: Acara: ${formData.eventName}, Tema: ${formData.eventTheme}, Waktu/Tempat: ${formData.eventDate}, ${formData.eventLocation}, Bahasa: ${getLanguageInstruction()}. Instruksi: Mulai dengan Puji Syukur. Sebutkan tujuan acara secara singkat. Gaya bahasa: Pejabat, wibawa, hangat. Output: HANYA teks paragraf pembuka (tanpa salam pembuka). Gunakan HURUF KAPITAL.`;
             const text = await fetchGeminiWithBackoff(prompt);
             if (text) setFormData(prev => ({ ...prev, openingSpeech: text.trim() }));
-        } catch (error) { showNotification(error.message || "Gagal membuat pembukaan."); } 
+        } catch (error) { showNotification(error.message); } 
         finally { setGeneratingOpening(false); }
       };
 
       const handleAIGeneratePoint = async (index) => {
         const pointer = points[index];
         if (!pointer || pointer.trim().length < 3) return showNotification("Tuliskan poin minimal 3 karakter.");
+        
+        const canProceed = await checkAndConsumeGuestToken();
+        if (!canProceed) return;
+
         setGeneratingIndex(index);
         try {
           const prompt = `Kembangkan poin ini jadi 1 paragraf pidato formal pejabat: "${pointer}". Konteks: ${formData.eventName}. Bahasa: ${getLanguageInstruction()}. HANYA TEKS PARAGRAF, HURUF KAPITAL.`;
           const text = await fetchGeminiWithBackoff(prompt);
           if (text) updatePoint(index, text.trim());
-        } catch (error) { showNotification(error.message || "Gagal membuat teks."); } 
+        } catch (error) { showNotification(error.message); } 
         finally { setGeneratingIndex(null); }
       };
 
       const handleAIClosing = async () => {
         const contentContext = points.filter(p => p.trim() !== '').join('. ');
         if (!contentContext) return showNotification("Isi poin sambutan dulu agar penutup sinkron.");
+        
+        const canProceed = await checkAndConsumeGuestToken();
+        if (!canProceed) return;
+
         setGeneratingClosing(true);
         try {
             const prompt = `Buatkan paragraf PENUTUP pidato resmi yang SINKRON dengan isi materi: "${contentContext}". Acara: ${formData.eventName}. Instruksi: Berikan kesimpulan singkat/harapan. Ajak hadirin berkolaborasi. Ucapkan terima kasih dan maaf. Bahasa: ${getLanguageInstruction()}. Output: HANYA teks paragraf penutup. Gunakan HURUF KAPITAL.`;
             const text = await fetchGeminiWithBackoff(prompt);
             if (text) setFormData(prev => ({ ...prev, closingSpeech: text.trim() }));
-        } catch (error) { showNotification(error.message || "Gagal membuat penutup."); } 
+        } catch (error) { showNotification(error.message); } 
         finally { setGeneratingClosing(false); }
       };
 
       const handleAIPantunGenerate = async () => {
         const contextText = points.filter(p => p.trim() !== '').join('. ');
+        
+        const canProceed = await checkAndConsumeGuestToken();
+        if (!canProceed) return;
+
         setGeneratingPantun(true);
         try {
             const prompt = `Buatkan satu bait PANTUN PENUTUP (4 baris) untuk pidato acara: ${formData.eventName}. Isi pidato: "${contextText}". Bahasa: ${formData.language === 'en' ? 'Inggris' : 'Indonesia'}. HANYA TEKS PANTUN KAPITAL.`;
             const text = await fetchGeminiWithBackoff(prompt);
             if (text) setFormData(prev => ({ ...prev, closingPantun: text.trim() }));
-        } catch (error) { showNotification(error.message || "Gagal membuat pantun."); } 
+        } catch (error) { showNotification(error.message); } 
         finally { setGeneratingPantun(false); }
       };
 
       const fetchHistory = async () => {
+        if (isGuest || !auth.currentUser) return;
+
         try {
           const querySnapshot = await getDocs(collection(db, 'artifacts', appId, 'users', userId, 'speeches'));
           const data = [];
@@ -260,6 +329,10 @@
       };
 
       const handleSaveToHistory = async () => {
+        if (isGuest) {
+          setShowPaymentModal(true);
+          return;
+        }
         if (!formData.eventName) {
           showNotification("Isi nama acara terlebih dahulu untuk menyimpan!");
           return;
@@ -272,13 +345,13 @@
             points,
             createdAt: new Date().toISOString()
           }));
-          const docRef = doc(collection(db, 'artifacts', appId, 'users', userId, 'speeches'));
-          await setDoc(docRef, speechData);
-          showNotification("Naskah berhasil disimpan ke Riwayat!");
+          
+          await addDoc(collection(db, 'artifacts', appId, 'users', userId, 'speeches'), speechData);
+          showNotification("Naskah berhasil disimpan ke Riwayat Cloud!");
           if (isHistoryOpen) fetchHistory();
         } catch (error) {
           console.error("Error saving history:", error);
-          showNotification("Gagal menyimpan naskah.");
+          showNotification("Gagal menyimpan: " + error.message);
         } finally {
           setIsSaving(false);
         }
@@ -306,6 +379,8 @@
       const getGreetings = () => formData.language === 'en' ? "BISMILLAAHIRRAHMAANIRRAHIIM\nASSALAMU’ALAIKUM WR. WB.\nPEACE BE UPON YOU, AND ALLAH'S MERCY AND BLESSINGS." : "BISMILLAAHIRRAHMAANIRRAHIIM\nASSALAAMU’ALAIKUM WR. WB.\nSALAM SEJAHTERA UNTUK KITA SEMUA,\nSAMPURASUN.";
       const getGuestPrefix = (index) => formData.language === 'en' ? (index === 0 ? "THE HONORABLE, " : "DISTINGUISHED, ") : (index === 0 ? "YTH. " : "YSH. ");
       const getParticipantPrefix = () => formData.language === 'en' ? "AND BELOVED AUDIENCE." : "YSB. PARA PESERTA,\nHADIRIN UNDANGAN YANG SAYA HORMATI.";
+      
+      // PERBAIKAN: Menghilangkan "HADIRIN YANG SAYA BANGGAKAN"
       const getInterjections = () => formData.language === 'en' ? ["DISTINGUISHED GUESTS,", "HAPPY ATTENDEES,"] : ["HADIRIN YANG SAYA HORMATI,", "HADIRIN YANG BERBAHAGIA,"];
       const getFinalThanks = () => formData.language === 'en' ? "THANK YOU." : "TERIMA KASIH.\nBILLAAHITTAUFIQ WALHIDAYAH,\nWASSALAAMU’ALAIKUM WR. WB.";
 
@@ -445,7 +520,11 @@
               
               <div className="flex items-center gap-3">
                 {/* Tombol Riwayat */}
-                <button onClick={() => setIsHistoryOpen(true)} className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white px-5 py-2.5 rounded-xl border border-white/20 transition-colors shadow-lg text-sm font-semibold">
+                <button onClick={() => {
+                    if(isGuest) { setShowPaymentModal(true); return; }
+                    setIsHistoryOpen(true);
+                  }} 
+                  className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white px-5 py-2.5 rounded-xl border border-white/20 transition-colors shadow-lg text-sm font-semibold">
                   <History size={18} /> Riwayat
                 </button>
                 
@@ -477,7 +556,7 @@
                         <option value="en">Bahasa Inggris (English)</option>
                         <option value="regional">Bahasa Daerah</option>
                       </select>
-                      {formData.language === 'regional' && <input type="text" name="regionalLanguage" value={formData.regionalLanguage} onChange={handleInputChange} placeholder="Nama Bahasa Daerah" className="w-full p-2.5 border border-white bg-white/70 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-300" autoFocus />}
+                      {formData.language === 'regional' && <input type="text" name="regionalLanguage" value={formData.regionalLanguage} onChange={handleInputChange} placeholder="Nama Bahasa Daerah" className="w-full p-2.5 border border-white bg-white/70 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-300" autoComplete="off" autoFocus />}
                     </div>
 
                     <div>
@@ -493,17 +572,17 @@
                       </div>
                     </div>
 
-                    <input type="text" name="speakerTitle" value={formData.speakerTitle} onChange={handleInputChange} placeholder="Jabatan Pembicara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
-                    <input type="text" name="eventName" value={formData.eventName} onChange={handleInputChange} placeholder="Nama Acara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
+                    <input type="text" name="speakerTitle" value={formData.speakerTitle} onChange={handleInputChange} placeholder="Jabatan Pembicara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" autoComplete="off" />
+                    <input type="text" name="eventName" value={formData.eventName} onChange={handleInputChange} placeholder="Nama Acara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" autoComplete="off" />
                     
                     <div className="space-y-3 p-3 bg-slate-50/80 rounded-xl border border-slate-200/60">
-                      <input type="text" name="eventDate" value={formData.eventDate} onChange={handleInputChange} placeholder="Hari / Tanggal" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-                      <input type="text" name="eventTime" value={formData.eventTime} onChange={handleInputChange} placeholder="Waktu" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-                      <input type="text" name="eventLocation" value={formData.eventLocation} onChange={handleInputChange} placeholder="Tempat" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input type="text" name="eventDate" value={formData.eventDate} onChange={handleInputChange} placeholder="Hari / Tanggal" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" autoComplete="off" />
+                      <input type="text" name="eventTime" value={formData.eventTime} onChange={handleInputChange} placeholder="Waktu" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" autoComplete="off" />
+                      <input type="text" name="eventLocation" value={formData.eventLocation} onChange={handleInputChange} placeholder="Tempat" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" autoComplete="off" />
                     </div>
 
-                    <input type="text" name="eventTheme" value={formData.eventTheme} onChange={handleInputChange} placeholder="Tema Acara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
-                    <input type="text" name="speakerName" value={formData.speakerName} onChange={handleInputChange} placeholder="Nama Pembicara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
+                    <input type="text" name="eventTheme" value={formData.eventTheme} onChange={handleInputChange} placeholder="Tema Acara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50/50" autoComplete="off" />
+                    <input type="text" name="speakerName" value={formData.speakerName} onChange={handleInputChange} placeholder="Nama Pembicara" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" autoComplete="off" />
                     
                     <select name="greetingType" value={formData.greetingType} onChange={handleInputChange} className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50/50">
                       <option value="formal">Salam Formal</option>
@@ -522,8 +601,8 @@
                     {guests.map((guest, idx) => (
                       <div key={idx} className="flex gap-2 items-start group">
                         <div className="flex-1 space-y-2">
-                           <input type="text" placeholder="Jabatan" value={guest.title} onChange={(e) => updateGuest(idx, 'title', e.target.value)} className="w-full p-2 text-sm border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
-                           <input type="text" placeholder="Nama (Opsional)" value={guest.name} onChange={(e) => updateGuest(idx, 'name', e.target.value)} className="w-full p-2 text-sm border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" />
+                           <input type="text" placeholder="Jabatan" value={guest.title} onChange={(e) => updateGuest(idx, 'title', e.target.value)} className="w-full p-2 text-sm border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" autoComplete="off" />
+                           <input type="text" placeholder="Nama (Opsional)" value={guest.name} onChange={(e) => updateGuest(idx, 'name', e.target.value)} className="w-full p-2 text-sm border border-slate-300 rounded-lg outline-none uppercase placeholder:normal-case focus:ring-2 focus:ring-blue-500 bg-slate-50/50" autoComplete="off" />
                         </div>
                         <button onClick={() => removeGuest(idx)} className="mt-1 text-slate-300 hover:text-red-500 p-2 bg-slate-50 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
                       </div>
@@ -583,7 +662,7 @@
                   <div className="flex justify-between items-center mb-4 border-b pb-2"><h2 className="text-lg font-semibold text-slate-800">6. Pantun Penutup</h2></div>
                   <div className="mb-3">
                       <button onClick={handleAIPantunGenerate} disabled={generatingPantun} className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all font-medium flex items-center justify-center gap-2 shadow-md text-sm disabled:opacity-70 disabled:cursor-not-allowed">
-                        {generatingPantun ? <><Loader2 size={16} className="animate-spin" /> Merangkai Pantun...</> : <><Sparkles size={16} /> Generate Pantun Otomatis</>}
+                            {generatingPantun ? <><Loader2 size={16} className="animate-spin" /> Merangkai Pantun...</> : <><Sparkles size={16} /> Generate Pantun Otomatis</>}
                       </button>
                   </div>
                   <textarea rows={4} name="closingPantun" placeholder="Hasil pantun AI akan muncul di sini..." value={formData.closingPantun} onChange={handleInputChange} className="w-full p-4 text-sm border border-purple-100 rounded-xl outline-none font-medium italic text-slate-700 uppercase placeholder:normal-case bg-purple-50/30 leading-relaxed text-center" />
@@ -600,7 +679,6 @@
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    {/* Tombol Simpan Ke Riwayat */}
                     <button onClick={handleSaveToHistory} disabled={isSaving} className="flex items-center gap-2 px-5 py-2.5 bg-blue-100 text-blue-700 rounded-xl hover:bg-blue-200 text-sm font-semibold transition-all shadow-sm hover:shadow-md transform hover:-translate-y-0.5 disabled:opacity-70">
                       {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} Simpan Riwayat
                     </button>
@@ -620,6 +698,50 @@
                 </div>
               </div>
             </div>
+
+            {/* --- MODAL POPUP PREMIUM UNTUK TAMU --- */}
+            {showPaymentModal && (
+              <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 print:hidden">
+                <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm" onClick={() => !isGuest && setShowPaymentModal(false)}></div>
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md flex flex-col relative z-10 overflow-hidden transform transition-all border border-amber-200">
+                  <div className="bg-gradient-to-br from-amber-400 to-orange-500 p-6 text-center">
+                    <Crown className="w-16 h-16 text-white mx-auto mb-3 drop-shadow-md" />
+                    <h2 className="text-2xl font-extrabold text-white drop-shadow-sm">Akses Premium</h2>
+                  </div>
+                  
+                  <div className="p-6 text-center space-y-4">
+                    <p className="text-slate-600 font-medium">
+                      Batas 5 kali uji coba gratis untuk email Anda telah habis. Dapatkan akses tanpa batas dan fitur Simpan Riwayat Cloud sekarang.
+                    </p>
+                    
+                    <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100">
+                      <span className="block text-sm text-amber-700 font-semibold mb-1">Harga Spesial</span>
+                      <span className="text-3xl font-extrabold text-amber-600">Rp 25.000</span>
+                      <span className="block text-xs text-amber-500 mt-1">Sekali bayar untuk kode akses selamanya</span>
+                    </div>
+
+                    <div className="text-sm text-slate-500 text-left space-y-2 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                      <p className="font-bold text-slate-700 flex items-center gap-2"><QrCode size={16}/> Cara Pembayaran:</p>
+                      <ol className="list-decimal pl-5 space-y-1">
+                        <li>Siapkan aplikasi M-Banking atau E-Wallet (Dana, Ovo, Gopay, dll).</li>
+                        <li>Hubungi Admin via WhatsApp untuk meminta QRIS Pembayaran.</li>
+                        <li>Kirimkan bukti transfer yang berhasil.</li>
+                        <li>Admin akan memberikan <strong>Kode Akses VIP</strong> untuk Registrasi.</li>
+                      </ol>
+                    </div>
+                    
+                    <a href="https://wa.me/6287838960454?text=Halo%20Admin,%20saya%20ingin%20membeli%20kode%20akses%20Premium%20PidatoPimpinan.AI%20seharga%20Rp%2025.000." target="_blank" rel="noreferrer" className="w-full bg-green-500 text-white py-3 rounded-xl font-bold hover:bg-green-600 transition-all shadow-lg flex items-center justify-center gap-2 mt-4">
+                      <MessageCircle size={20} /> Hubungi Admin (WhatsApp)
+                    </a>
+                    
+                    <button onClick={() => setShowPaymentModal(false)} className="mt-4 text-slate-400 hover:text-slate-600 text-sm font-medium w-full py-2">
+                      Tutup
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
 
           {/* --- MODAL RIWAYAT NASKAH --- */}
@@ -695,39 +817,70 @@
     // ==========================================
     // AUTHENTICATION & ROUTING LAYER
     // ==========================================
-
     function App() {
       const [user, setUser] = useState(null);
       const [userProfile, setUserProfile] = useState(null);
       const [loading, setLoading] = useState(true);
-      const [view, setView] = useState('login'); // 'login', 'register', 'forgot'
+      const [view, setView] = useState('login'); // 'login', 'register', 'forgot', 'guest_login'
+      const [isGuest, setIsGuest] = useState(false);
 
       useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-          setUser(currentUser);
           if (currentUser) {
-            setUserProfile({ email: currentUser.email, name: currentUser.displayName || 'Pengguna' });
+            setUser(currentUser);
+            if (!currentUser.isAnonymous) {
+              setUserProfile({ email: currentUser.email, name: currentUser.displayName || 'Pengguna' });
+              setIsGuest(false);
+            } else {
+              // Bila anonim, kembalikan ke profil tamu yang ada di localstorage
+              const storedSession = localStorage.getItem('pidatoSession');
+              if (storedSession) {
+                const parsedSession = JSON.parse(storedSession);
+                setIsGuest(true);
+                setUserProfile(parsedSession);
+              }
+            }
+          } else {
+            setUser(null);
+            setUserProfile(null);
+            setIsGuest(false);
           }
           setLoading(false);
         });
         return () => unsubscribe();
       }, []);
 
+      const handleGuestLoginSuccess = (guestEmail) => {
+        const sessionData = { name: 'Tamu (Uji Coba)', email: guestEmail, role: 'guest' };
+        localStorage.setItem('pidatoSession', JSON.stringify(sessionData));
+        setIsGuest(true);
+        setUserProfile(sessionData);
+      };
+
       const handleLogout = async () => {
-        await signOut(auth);
+        if (isGuest) {
+          setIsGuest(false);
+          localStorage.removeItem('pidatoSession');
+          setUserProfile(null);
+          setView('login');
+          await signOut(auth); // Sign out juga dari sesi anonim Firebase
+        } else {
+          await signOut(auth);
+          localStorage.removeItem('pidatoSession');
+        }
       };
 
       if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-900"><Loader2 className="animate-spin text-cyan-400" size={40} /></div>;
 
-      if (user) {
-        // PASS user.uid AS userId to MainApp
-        return <MainApp onLogout={handleLogout} userProfile={userProfile} userId={user.uid} />;
+      if (user || isGuest) {
+        const currentUserProfile = isGuest ? userProfile : userProfile;
+        const currentUserId = user?.uid || 'guest_user';
+        return <MainApp onLogout={handleLogout} userProfile={currentUserProfile} userId={currentUserId} isGuest={isGuest} />;
       }
 
       return (
         <div className="min-h-screen relative flex flex-col justify-center items-center p-4 overflow-hidden bg-slate-900">
           
-          {/* FUTURISTIC ABSTRACT BACKGROUND */}
           <div className="absolute inset-0 z-0">
              <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-blue-600 rounded-full mix-blend-screen filter blur-[120px] opacity-30 animate-pulse"></div>
              <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] bg-cyan-500 rounded-full mix-blend-screen filter blur-[100px] opacity-20"></div>
@@ -743,9 +896,8 @@
               <p className="text-blue-200/80 text-sm mt-2 font-medium">Aplikasi Pembuat Naskah Sambutan Otomatis</p>
             </div>
             
-            {view === 'login' && (
-               <LoginForm setView={setView} />
-            )}
+            {view === 'login' && <LoginForm setView={setView} />}
+            {view === 'guest_login' && <GuestLoginForm setView={setView} onGuestLoginSuccess={handleGuestLoginSuccess} />}
             {view === 'register' && (
                <>
                  <h2 className="text-xl font-semibold mb-6 text-center tracking-wide">Registrasi</h2>
@@ -805,9 +957,99 @@
           <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white py-3 rounded-xl font-bold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg flex items-center justify-center gap-2 transform hover:-translate-y-0.5">
             {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Login'}
           </button>
+
+          <div className="relative flex items-center py-2 mt-4">
+            <div className="flex-grow border-t border-slate-600"></div>
+            <span className="flex-shrink-0 mx-4 text-slate-400 text-xs">ATAU</span>
+            <div className="flex-grow border-t border-slate-600"></div>
+          </div>
+
+          <button type="button" onClick={() => setView('guest_login')} className="w-full bg-slate-800 text-white py-3 rounded-xl font-bold hover:bg-slate-700 transition-all shadow-lg flex items-center justify-center gap-2 transform hover:-translate-y-0.5 border border-slate-600">
+            <User size={18} /> Masuk sebagai Tamu (Coba Gratis)
+          </button>
+
           <p className="text-center text-sm text-slate-300 mt-6">
             Belum punya akun? <button type="button" onClick={() => setView('register')} className="text-cyan-400 font-bold hover:underline ml-1">Registrasi</button>
           </p>
+        </form>
+      );
+    }
+
+    function GuestLoginForm({ setView, onGuestLoginSuccess }) {
+      const [email, setEmail] = useState('');
+      const [error, setError] = useState('');
+      const [isChecking, setIsChecking] = useState(false);
+
+      const handleGuestAccess = async (e) => {
+        e.preventDefault();
+        setError('');
+        
+        if (!email) {
+          setError('Silakan masukkan alamat email Anda.');
+          return;
+        }
+
+        setIsChecking(true);
+        try {
+          // 1. Wajib melakukan otentikasi "Anonim" terlebih dahulu untuk dapat izin membaca Database (Rules)
+          await signInAnonymously(auth);
+
+          // 2. Mengecek histori penggunaan dari email ini di Database Firebase
+          const safeEmail = email.toLowerCase().replace(/[^a-z0-9]/g, '_');
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'guestUsage', safeEmail);
+          const docSnap = await getDoc(docRef);
+          
+          let currentUsage = 0;
+          if (docSnap.exists()) {
+            currentUsage = docSnap.data().usage || 0;
+          }
+
+          if (currentUsage >= 5) {
+            setError('Email ini telah mencapai batas 5 kali percobaan AI. Silakan daftar akun Premium.');
+            await signOut(auth); // Keluar dari sesi anonim
+            return;
+          }
+
+          // Jika berhasil dan masih punya kuota
+          onGuestLoginSuccess(email);
+
+        } catch (err) {
+          console.error(err);
+          if (err.code === 'permission-denied') {
+            setError('Aturan (Rules) Firebase belum diperbarui untuk Tamu. Silakan cek konsol Firebase Anda.');
+          } else {
+            setError('Terjadi kesalahan saat memverifikasi sesi tamu.');
+          }
+          await signOut(auth);
+        } finally {
+          setIsChecking(false);
+        }
+      };
+
+      return (
+        <form onSubmit={handleGuestAccess} className="space-y-5">
+          {error && <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm backdrop-blur-sm text-center">{error}</div>}
+          
+          <div className="text-center mb-6">
+            <h3 className="text-xl font-bold text-white mb-2">Akses Tamu Terbatas</h3>
+            <p className="text-sm text-blue-200">Masukkan email Anda untuk mendapatkan <strong>5 kali percobaan</strong> Generate AI.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-1.5">Email Anda</label>
+            <div className="relative">
+              <Mail className="absolute left-3.5 top-3 text-blue-300" size={18} />
+              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none text-white placeholder-slate-400 transition-all" placeholder="email@anda.com" />
+            </div>
+          </div>
+          
+          <button type="submit" disabled={isChecking} className="w-full bg-slate-800 text-white py-3 rounded-xl font-bold hover:bg-slate-700 transition-all shadow-lg flex items-center justify-center gap-2 mt-6 border border-slate-600 transform hover:-translate-y-0.5">
+            {isChecking ? <Loader2 className="animate-spin" size={18} /> : <><User size={18} /> Mulai Uji Coba Gratis</>}
+          </button>
+          
+          <button type="button" onClick={() => setView('login')} className="w-full bg-transparent text-slate-300 py-3 rounded-xl font-medium hover:text-white transition-all mt-2">
+            Batal & Kembali ke Login
+          </button>
         </form>
       );
     }
@@ -828,7 +1070,6 @@
         setIsSubmitting(true);
         
         try {
-          // 1. Validasi kode akses ke Google Apps Script terlebih dahulu
           if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL === "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
              throw new Error("URL Google Apps Script belum diatur.");
           }
@@ -846,16 +1087,13 @@
             return;
           }
 
-          // 2. Jika valid, buat akun di Firebase
           const userCredential = await createUserWithEmailAndPassword(auth, email, password);
           
-          // 3. Simpan profil ke Firebase Firestore
           await setDoc(doc(db, 'artifacts', appId, 'users', userCredential.user.uid, 'profile'), {
             name, email, role: 'user', createdAt: new Date().toISOString()
           });
 
-          // 4. Rekap data ke Google Sheets melalui API Apps Script
-          if(GAS_WEB_APP_URL && GAS_WEB_APP_URL !== "MASUKKAN_URL_GOOGLE_SCRIPT_WEB_APP_ANDA_DISINI") {
+          if(GAS_WEB_APP_URL) {
              try {
                await fetch(GAS_WEB_APP_URL, {
                   method: 'POST',
@@ -872,7 +1110,6 @@
                console.error("Gagal merekap ke Google Sheet:", err);
              }
           }
-
         } catch (err) {
           setError(err.message.includes('email-already') ? 'Email sudah terdaftar.' : (err.message || 'Pendaftaran gagal. Coba lagi.'));
         } finally {
